@@ -16,6 +16,7 @@ import {
   type EmbedJob,
   embedJobKey,
   ensureJobQueues,
+  HUB_QUEUE,
   INDEX_QUEUE,
   LOOK_QUEUE,
   PRUNE_QUEUE,
@@ -51,6 +52,7 @@ const TEST_SETTINGS = {
   [AHEAD_QUEUE]: { retryLimit: 1, retryDelaySeconds: 1, expireInSeconds: 60 },
   [LOOK_QUEUE]: { retryLimit: 0, retryDelaySeconds: 1, expireInSeconds: 60 },
   [PRUNE_QUEUE]: { retryLimit: 0, retryDelaySeconds: 1, expireInSeconds: 60 },
+  [HUB_QUEUE]: { retryLimit: 0, retryDelaySeconds: 1, expireInSeconds: 60 },
 } satisfies typeof QUEUE_SETTINGS;
 
 /** A unit vector made of the text, the same for the same text. */
@@ -259,7 +261,7 @@ describe("a worker beside one of the build before", () => {
       },
     );
     const started = await worker.start();
-    expect(started.queues).toEqual([INDEX_QUEUE, EMBED_QUEUE, SWEEP_QUEUE]);
+    expect(started.queues).toEqual([INDEX_QUEUE, HUB_QUEUE, EMBED_QUEUE, SWEEP_QUEUE]);
     expect(sent).not.toContain(SWEEP_QUEUE);
     expect(logs.filter((line) => line.msg === "embeddings swept").at(-1)).toMatchObject({
       queued: 0,

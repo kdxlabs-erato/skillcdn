@@ -315,6 +315,47 @@ export const indexEntries = pgTable(
 );
 
 /**
+ * A snapshot whose findable entries are copied to `hub_entries`, as its index was when they were
+ * (ADR-0104): `indexed_at` is the snapshot's then, and a snapshot indexed since is not copied,
+ * whoever wrote it. `entries` is how many were. Not tenant-scoped: it holds the snapshots the
+ * search across packs covers, public all of them when copied, and is read only by that search,
+ * which names the snapshots it searches.
+ */
+export const hubSnapshots = pgTable("hub_snapshots", {
+  snapshotId: uuid()
+    .primaryKey()
+    .references(() => snapshots.id, { onDelete: "cascade" }),
+  indexedAt: instant().notNull(),
+  entries: integer().notNull(),
+  createdAt: createdAt(),
+});
+
+/**
+ * The findable entries of the snapshots the search across packs covers, each with its search
+ * vector (ADR-0104): what the words of that search are counted and matched in, so that a word is
+ * not looked up among the entries of every commit a deployment keeps. Copied from
+ * `index_entries` with the row of `hub_snapshots` that says so, in one transaction, and dropped
+ * with it. Not tenant-scoped, as `hub_snapshots` is not.
+ */
+export const hubEntries = pgTable(
+  "hub_entries",
+  {
+    snapshotId: uuid()
+      .notNull()
+      .references(() => hubSnapshots.snapshotId, { onDelete: "cascade" }),
+    path: text().notNull(),
+    search: tsvector().notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({ name: "hub_entries_pkey", columns: [table.snapshotId, table.path] }),
+    // Written a snapshot at a time and read by every search: without the list of pending
+    // entries, which every search would read through.
+    index("hub_entries_search_idx").using("gin", table.search).with({ fastupdate: false }),
+  ],
+);
+
+/**
  * How often something happened to a repository on one day (UTC): a counter per metric and
  * subject, added to and never rewritten. Nothing here identifies a client, and only a public
  * repository has rows: these numbers are meant to be shown.

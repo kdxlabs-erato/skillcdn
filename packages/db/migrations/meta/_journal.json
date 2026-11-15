@@ -232,6 +232,13 @@
       "when": 1794678000501,
       "tag": "0032_section-halves",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794711746904,
+      "tag": "0033_hub-entries",
+      "breakpoints": true
     }
   ]
 }

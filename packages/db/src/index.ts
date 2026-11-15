@@ -75,6 +75,9 @@ export {
 } from "./queries/entries.js";
 export {
   countHubLexemes,
+  dropHubEntries,
+  HUB_COPY_LIMIT,
+  type HubCopying,
   type HubEntryRecord,
   type HubSectionMatch,
   isStatementTimeout,
@@ -82,6 +85,7 @@ export {
   type SearchablePack,
   searchHubEntries,
   searchHubSectionVectors,
+  syncHubEntries,
 } from "./queries/hub.js";
 export {
   listOperatorImages,

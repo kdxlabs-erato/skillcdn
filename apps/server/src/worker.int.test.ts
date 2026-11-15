@@ -50,6 +50,7 @@ import {
   EMBED_QUEUE,
   type EmbedJob,
   ensureJobQueues,
+  HUB_QUEUE,
   INDEX_QUEUE,
   LOOK_QUEUE,
   PRUNE_QUEUE,
@@ -92,6 +93,7 @@ const TEST_SETTINGS = {
   [AHEAD_QUEUE]: { retryLimit: 1, retryDelaySeconds: 1, expireInSeconds: 60 },
   [LOOK_QUEUE]: { retryLimit: 0, retryDelaySeconds: 1, expireInSeconds: 60 },
   [PRUNE_QUEUE]: { retryLimit: 0, retryDelaySeconds: 1, expireInSeconds: 60 },
+  [HUB_QUEUE]: { retryLimit: 0, retryDelaySeconds: 1, expireInSeconds: 60 },
 } satisfies typeof QUEUE_SETTINGS;
 
 /** A unit vector made of the text, the same for the same text. */
@@ -202,7 +204,7 @@ beforeAll(async () => {
     await sendIndexJob(jobs, { address: "/gh/acme/document-pack" }),
   ];
   const started = await worker.start();
-  expect(started.queues).toEqual([INDEX_QUEUE, EMBED_QUEUE, SWEEP_QUEUE]);
+  expect(started.queues).toEqual([INDEX_QUEUE, HUB_QUEUE, EMBED_QUEUE, SWEEP_QUEUE]);
   await ensureJobQueues(jobs, TEST_SETTINGS);
 });
 
@@ -700,7 +702,7 @@ describe("the worker", () => {
       },
     );
     const calls = fake.calls.length;
-    expect((await resting.start()).queues).toEqual([INDEX_QUEUE]);
+    expect((await resting.start()).queues).toEqual([INDEX_QUEUE, HUB_QUEUE]);
     await resting.close(0);
     expect(fake.calls.length).toBe(calls);
     // They are there again; and are put back for the tests after this one.

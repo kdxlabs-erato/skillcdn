@@ -18,6 +18,7 @@ import {
   claimSnapshot,
   countHubLexemes,
   createBlobStore,
+  dropHubEntries,
   ensureSnapshot,
   fillPartVectors,
   isStatementTimeout,
@@ -29,6 +30,7 @@ import {
   searchHubEntries,
   searchHubSectionVectors,
   supportsSectionVectors,
+  syncHubEntries,
   type VectorKey,
   writeSectionVectors,
   writeSnapshotIndex,
@@ -115,19 +117,25 @@ async function repository(
   return scope;
 }
 
+/** Indexes `commit`, under the reading rules of `version`: a later one indexes it again. */
 async function index(
   scope: RepoScope,
   commit: string,
   entries: IndexEntry[],
   bodies: Record<string, string>,
+  {
+    version = 1,
+    now = T0,
+    hub,
+  }: { readonly version?: number; readonly now?: Date; readonly hub?: boolean } = {},
 ): Promise<string> {
-  const snapshot = await ensureSnapshot(database, scope, commit, 1, T0);
+  const snapshot = await ensureSnapshot(database, scope, commit, version, now);
   const at = { accountId: scope.accountId, snapshotId: snapshot.id };
   const store = createBlobStore(database);
   for (const [sha, content] of Object.entries(bodies)) {
     await store.write(sha, new TextEncoder().encode(content));
   }
-  expect(await claimSnapshot(database, at, "builder", T0, 60_000)).toBeDefined();
+  expect(await claimSnapshot(database, at, "builder", now, 60_000)).toBeDefined();
   const vectorized = entries.map((item) =>
     item.searchable && item.search === undefined
       ? {
@@ -147,12 +155,23 @@ async function index(
         indexedBytes: 0,
         diagnostics: [],
         license: NO_LICENSE,
-        version: 1,
+        version,
       },
-      T0,
+      now,
+      hub === undefined ? {} : { hub },
     ),
   ).toBe(true);
   return snapshot.id;
+}
+
+/** The snapshots whose entries are copied for the search across packs, and the paths copied. */
+async function copies(): Promise<Map<string, string[]>> {
+  const rows = await drizzleOf(database).execute<{ snapshot_id: string; paths: string[] | null }>(
+    sql`select h.snapshot_id, array_agg(c.path order by c.path) filter (where c.path is not null) as paths
+      from hub_snapshots h left join hub_entries c on c.snapshot_id = h.snapshot_id
+      group by h.snapshot_id`,
+  );
+  return new Map(rows.rows.map((row) => [row.snapshot_id, row.paths ?? []]));
 }
 
 const commit = (letter: string) => letter.repeat(40);
@@ -718,17 +737,41 @@ describe("the words and the meaning across every pack", () => {
       limit: 10,
       meaning: { key: KEY, query: Float32Array.from([0, 0, 1, 0]), parts: 5 },
     });
-    // The count reads the twenty once for the total and once more for each word they hold, and
-    // nothing of the four thousand files.
-    expect(reading.count.entries).toBeLessThanOrEqual(20 + 1 + 20);
-    expect(reading.count.indexes).toEqual([
+    // The count reads the twenty once for each word they hold, from their copy, and nothing of
+    // the four thousand files nor of the entries (ADR-0104); the total is what the copy says.
+    expect(reading.count.entries).toBeLessThanOrEqual(1 + 20);
+    expect(reading.count.indexes).toContain("hub_entries_search_idx");
+    expect(reading.count.scans.filter((scan) => / on index_entries$/.test(scan))).toEqual([]);
+    // The words read the twenty that hold one once, through the index of the copy's vectors, and
+    // the entries of the ten answered alone.
+    expect(reading.words?.entries).toBeLessThanOrEqual(20 + 10);
+    expect(reading.words?.indexes).toEqual([
+      "hub_entries_search_idx",
+      "index_entries_snapshot_path_key",
+    ]);
+    // Not copied, as before the worker's first pass, the entries are read themselves: the count
+    // reads the twenty once for the total and once more for each word they hold, and the words
+    // read those that hold one once, narrowed as they are read; read a second time by their ids,
+    // they were forty (ADR-0098).
+    expect(await dropHubEntries(database)).toBeGreaterThan(0);
+    const uncopied = await readHubStatements(database, {
+      snapshotIds: ids,
+      lexemes,
+      weights: queryWeights(counted.total, counted.counts),
+      limit: 10,
+    });
+    expect(uncopied.count.entries).toBeLessThanOrEqual(20 + 1 + 20);
+    expect(uncopied.count.indexes).toEqual([
       "index_entries_findable_idx",
       "index_entries_search_idx",
     ]);
-    // The words read the twenty that hold one once, through the index of the vectors, and are
-    // narrowed there: read a second time by their ids, they were forty (ADR-0098).
-    expect(reading.words?.entries).toBeLessThanOrEqual(20);
-    expect(reading.words?.indexes).toEqual(["index_entries_search_idx"]);
+    expect(uncopied.words?.entries).toBeLessThanOrEqual(20 + 10);
+    expect(uncopied.words?.indexes).toEqual([
+      "index_entries_search_idx",
+      "index_entries_snapshot_path_key",
+    ]);
+    expect(await countHubLexemes(database, ids, lexemes, 5000)).toEqual(counted);
+    expect((await syncHubEntries(database)).copied).toBeGreaterThan(0);
     // How the meaning goes about it is the planner's to choose in a table this small; what it
     // may not do is read the files.
     expect(reading.meaning?.entries).toBeLessThan(1000);
@@ -749,5 +792,243 @@ describe("the words and the meaning across every pack", () => {
     expect(isStatementTimeout({ code: "23505" })).toBe(false);
     expect(isStatementTimeout(new Error("plain"))).toBe(false);
     expect(isStatementTimeout(undefined)).toBe(false);
+  });
+});
+
+describe("the copy of the entries the search across packs reads its words in (ADR-0104)", () => {
+  it("copies the findable entries of a snapshot the search covers as its index is written, and nothing else", async () => {
+    const served = await repository("copy-served", commit("1"), undefined);
+    const servedId = await index(
+      served,
+      commit("1"),
+      [
+        entry({ path: "docs/kept.md", blobSha: "copy-kept" }),
+        // Left out by the reading rules, and listed without being searched: neither is copied.
+        entry({ path: "notes/hidden.md", blobSha: "copy-hidden", visible: false }),
+        entry({ path: "src/tool.ts", blobSha: "copy-tool", kind: "other", searchable: false }),
+      ],
+      { "copy-kept": "axolotl gills", "copy-hidden": "axolotl" },
+    );
+    // A commit kept beside the one served, a private repository and one its manifest keeps out
+    // are searched by nothing, and copied for nothing.
+    const kept = await index(
+      served,
+      commit("2"),
+      [entry({ path: "docs/old.md", blobSha: "copy-old" })],
+      { "copy-old": "axolotl" },
+    );
+    const secret = await repository("copy-secret", commit("3"), undefined, {}, "private");
+    const secretId = await index(
+      secret,
+      commit("3"),
+      [entry({ path: "docs/secret.md", blobSha: "copy-secret" })],
+      { "copy-secret": "axolotl" },
+    );
+    const quiet = await repository("copy-quiet", commit("4"), undefined);
+    const quietId = await index(
+      quiet,
+      commit("4"),
+      [
+        entry({
+          path: "SKILLCDN.md",
+          blobSha: "copy-quiet-manifest",
+          kind: "manifest",
+          searchable: false,
+          frontMatter: { metadata: {}, warnings: [], search: { meaning: true, hub: false } },
+        }),
+        entry({ path: "docs/quiet.md", blobSha: "copy-quiet" }),
+      ],
+      { "copy-quiet": "axolotl" },
+    );
+
+    const copied = await copies();
+    expect(copied.get(servedId)).toEqual(["docs/kept.md"]);
+    for (const id of [kept, secretId, quietId]) {
+      expect(copied.has(id)).toBe(false);
+    }
+    // Nothing is left for the worker's pass to do for these.
+    await syncHubEntries(database);
+    const synced = await copies();
+    expect(synced.get(servedId)).toEqual(["docs/kept.md"]);
+    expect([kept, secretId, quietId].filter((id) => synced.has(id))).toEqual([]);
+    expect(await countHubLexemes(database, [servedId], queryLexemes("axolotl"), 5000)).toEqual({
+      total: 1,
+      counts: [1],
+    });
+    // A deployment that does not search across its packs keeps no copy.
+    const unsearched = await repository("copy-unsearched", commit("5"), undefined);
+    const unsearchedId = await index(
+      unsearched,
+      commit("5"),
+      [entry({ path: "docs/plain.md", blobSha: "copy-plain" })],
+      { "copy-plain": "axolotl" },
+      { hub: false },
+    );
+    expect((await copies()).has(unsearchedId)).toBe(false);
+  });
+
+  it("answers from the copy as from the entries, and from a part of each", async () => {
+    const scopes = [
+      await repository(
+        "copy-same-one",
+        commit("5"),
+        [
+          entry({ path: "docs/a.md", blobSha: "copy-same-a" }),
+          entry({ path: "docs/b.md", blobSha: "copy-same-b" }),
+        ],
+        { "copy-same-a": "capybara wallow", "copy-same-b": "capybara capybara" },
+      ),
+      await repository(
+        "copy-same-two",
+        commit("6"),
+        [
+          entry({ path: "docs/c.md", blobSha: "copy-same-c" }),
+          entry({
+            path: "skills/w/SKILL.md",
+            blobSha: "copy-same-w",
+            kind: "skill",
+            skillDir: "skills/w",
+            name: "w",
+            description: "wallow in mud",
+          }),
+        ],
+        { "copy-same-c": "wallow", "copy-same-w": "" },
+      ),
+    ];
+    const ids = (await listSearchablePacks(database))
+      .filter((pack) => scopes.some((scope) => scope.repoId === pack.repoId))
+      .map((pack) => pack.snapshotId);
+    expect(ids).toHaveLength(2);
+    const lexemes = queryLexemes("capybara wallow");
+    const answer = async () => {
+      const counted = await countHubLexemes(database, ids, lexemes, 5000);
+      const weights = queryWeights(counted.total, counted.counts);
+      const found = await searchHubEntries(database, ids, lexemes, weights, 10, 5000);
+      return { counted, found };
+    };
+
+    const fromCopy = await answer();
+    expect(fromCopy.counted).toEqual({ total: 4, counts: [2, 3] });
+    expect(fromCopy.found.map((row) => row.path).sort()).toEqual([
+      "docs/a.md",
+      "docs/b.md",
+      "docs/c.md",
+      "skills/w/SKILL.md",
+    ]);
+    // A record of the copy is the entry's record, whatever it was found in.
+    expect(fromCopy.found.find((row) => row.kind === "skill")).toMatchObject({
+      name: "w",
+      skillDir: "skills/w",
+      description: "wallow in mud",
+      searchable: true,
+      snapshotId: ids[1],
+    });
+    // One pack copied and the other not, and neither copied: the same answer, in the same order.
+    await drizzleOf(database).execute(
+      sql`delete from hub_snapshots where snapshot_id = ${ids[1] ?? ""}`,
+    );
+    expect(await answer()).toEqual(fromCopy);
+    expect(await dropHubEntries(database)).toBeGreaterThan(0);
+    expect(await answer()).toEqual(fromCopy);
+    const synced = await syncHubEntries(database);
+    expect(synced.copied).toBeGreaterThanOrEqual(2);
+    expect(synced.left).toBe(0);
+    expect(await answer()).toEqual(fromCopy);
+  });
+
+  it("follows what the search covers: a newer commit, one indexed before, an index written again, a repository gone private", async () => {
+    const scope = await repository("copy-moving", commit("7"), [
+      entry({ path: "docs/first.md", blobSha: "copy-first" }),
+    ]);
+    const idOf = async (): Promise<string> =>
+      (await listSearchablePacks(database)).find((pack) => pack.repoId === scope.repoId)
+        ?.snapshotId ?? "";
+    const one = await idOf();
+    expect((await copies()).get(one)).toEqual(["docs/first.md"]);
+
+    // The branch moves on: the commit before is served, and copied, while the newer is indexed.
+    const later = new Date(T0.getTime() + 60_000);
+    await saveCachedRef(database, scope, "", commit("8"), later);
+    expect(await idOf()).toBe(one);
+    const two = await index(
+      scope,
+      commit("8"),
+      [entry({ path: "docs/second.md", blobSha: "copy-second" })],
+      {},
+    );
+    expect(await idOf()).toBe(two);
+    // The newer is copied as it is written; the one before, searched no longer, goes at the pass.
+    expect((await copies()).get(two)).toEqual(["docs/second.md"]);
+    await syncHubEntries(database);
+    expect((await copies()).has(one)).toBe(false);
+    expect((await copies()).get(two)).toEqual(["docs/second.md"]);
+
+    // Back to a commit indexed before: nothing is written, and it is searched from its entries
+    // until the pass copies it.
+    await saveCachedRef(database, scope, "", commit("7"), new Date(later.getTime() + 60_000));
+    expect(await idOf()).toBe(one);
+    const firstWord = queryLexemes("first");
+    expect(await countHubLexemes(database, [one], firstWord, 5000)).toEqual({
+      total: 1,
+      counts: [1],
+    });
+    await syncHubEntries(database);
+    expect((await copies()).get(one)).toEqual(["docs/first.md"]);
+    expect((await copies()).has(two)).toBe(false);
+
+    // Indexed again under later rules, its copy is of the new index.
+    await index(
+      scope,
+      commit("7"),
+      [entry({ path: "docs/again.md", blobSha: "copy-again" })],
+      {},
+      {
+        version: 2,
+        now: new Date(later.getTime() + 120_000),
+      },
+    );
+    expect((await copies()).get(one)).toEqual(["docs/again.md"]);
+
+    // Written by a build before this one, which knows no copy: the copy says it is of the index
+    // before, so the entries are read, and the pass copies the new index.
+    const older = queryLexemes("quoll");
+    await drizzleOf(database).execute(sql`
+      insert into index_entries (account_id, snapshot_id, path, kind, size, blob_sha, search)
+      values (${scope.accountId}, ${one}, 'docs/older-build.md', 'markdown', 10, 'copy-older',
+        array_to_tsvector(${sql.param(older)}::text[]))`);
+    await drizzleOf(database).execute(
+      sql`update snapshots set indexed_at = indexed_at + interval '1 minute' where id = ${one}`,
+    );
+    expect(await countHubLexemes(database, [one], older, 5000)).toEqual({
+      total: 2,
+      counts: [1],
+    });
+    expect((await syncHubEntries(database)).dropped).toBeGreaterThanOrEqual(1);
+    expect((await copies()).get(one)).toEqual(["docs/again.md", "docs/older-build.md"]);
+
+    // Private now: the pass drops it, and the snapshot gone takes its copy with it.
+    await drizzleOf(database).execute(
+      sql`update repos set visibility = 'private' where id = ${scope.repoId}`,
+    );
+    await syncHubEntries(database);
+    expect((await copies()).has(one)).toBe(false);
+    await drizzleOf(database).execute(
+      sql`update repos set visibility = 'public' where id = ${scope.repoId}`,
+    );
+    await syncHubEntries(database);
+    expect((await copies()).has(one)).toBe(true);
+    await drizzleOf(database).execute(sql`delete from snapshots where id = ${one}`);
+    expect((await copies()).has(one)).toBe(false);
+  });
+
+  it("copies at most as many snapshots a pass as it is given, and says how many are left", async () => {
+    await dropHubEntries(database);
+    const searched = (await listSearchablePacks(database)).length;
+    expect(searched).toBeGreaterThan(2);
+    const first = await syncHubEntries(database, 2);
+    expect(first).toMatchObject({ copied: 2, left: searched - 2 });
+    const rest = await syncHubEntries(database);
+    expect(rest).toMatchObject({ copied: searched - 2, left: 0 });
+    expect(await syncHubEntries(database)).toEqual({ dropped: 0, copied: 0, left: 0 });
   });
 });

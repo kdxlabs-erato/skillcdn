@@ -3,6 +3,8 @@ import { and, eq, type SQL, sql } from "drizzle-orm";
 import { type Database, type Drizzle, drizzleOf } from "../client.js";
 import {
   accounts,
+  hubEntries,
+  hubSnapshots,
   indexEntries,
   partVectors,
   repoAliases,
@@ -23,10 +25,11 @@ import {
 } from "./vectors.js";
 
 // The search across every pack a deployment serves (ADR-0070): which snapshots it covers, the
-// words over all of them at once, and the sections nearest in meaning, of the parts of their
-// bodies nearest in meaning (ADR-0092), compared at half precision (ADR-0103). Every statement
-// runs under a time limit of its own, since it reads every pack there is, and the caller decides
-// what a search that ran out of time answers.
+// words over all of them at once, read from a copy of the entries searched (ADR-0104), and the
+// sections nearest in meaning, of the parts of their bodies nearest in meaning (ADR-0092),
+// compared at half precision (ADR-0103). Every statement runs under a time limit of its own,
+// since it reads every pack there is, and the caller decides what a search that ran out of time
+// answers.
 
 /** A pack the search across packs covers: the snapshot it is served from, and how it is addressed. */
 export interface SearchablePack {
@@ -63,8 +66,6 @@ export interface SearchablePack {
  * again where `confirmedAt` is long ago (ADR-0097).
  */
 export async function listSearchablePacks(database: Database): Promise<SearchablePack[]> {
-  const served = sql`case when exists (select 1 from ${snapshots} n where n.repo_id = ${repos.id} and n.commit_sha = ${repoRefs.commitSha} and n.index_version > 0) then ${repoRefs.commitSha} else ${repoRefs.previousCommitSha} end`;
-  const optedOut = sql`exists (select 1 from ${indexEntries} m where m.snapshot_id = ${snapshots.id} and m.path = 'SKILLCDN.md' and m.kind = 'manifest' and (m.front_matter -> 'search' ->> 'hub') = 'false')`;
   const hasManifest = sql<boolean>`exists (select 1 from ${indexEntries} m where m.snapshot_id = ${snapshots.id} and m.path = 'SKILLCDN.md' and m.kind = 'manifest')`;
   const skillCount = sql<number>`(select count(*)::int from ${indexEntries} k where k.snapshot_id = ${snapshots.id} and k.kind = 'skill' and k.visible)`;
   const confirmedAt =
@@ -87,17 +88,141 @@ export async function listSearchablePacks(database: Database): Promise<Searchabl
     })
     .from(repos)
     .innerJoin(accounts, eq(accounts.id, repos.accountId))
-    .innerJoin(repoRefs, and(eq(repoRefs.repoId, repos.id), eq(repoRefs.ref, "")))
-    .innerJoin(
-      snapshots,
-      and(
-        eq(snapshots.repoId, repos.id),
-        sql`${snapshots.commitSha} = ${served}`,
-        sql`${snapshots.indexVersion} > 0`,
-      ),
-    )
-    .where(and(eq(repos.visibility, "public"), sql`not ${optedOut}`))
+    .innerJoin(repoRefs, DEFAULT_BRANCH)
+    .innerJoin(snapshots, SERVED)
+    .where(SEARCHED)
     .orderBy(accounts.login, repos.name);
+}
+
+// What makes a snapshot one the search across packs covers, said once for the list of them and
+// for the copy of their entries.
+
+/** The ref of a repository's default branch, which is the empty one. */
+const DEFAULT_BRANCH = and(eq(repoRefs.repoId, repos.id), eq(repoRefs.ref, ""));
+/** The snapshot of the commit the default branch is served from: its own where it has an index, else the one before. */
+const SERVED = and(
+  eq(snapshots.repoId, repos.id),
+  sql`${snapshots.commitSha} = case when exists (select 1 from ${snapshots} n where n.repo_id = ${repos.id} and n.commit_sha = ${repoRefs.commitSha} and n.index_version > 0) then ${repoRefs.commitSha} else ${repoRefs.previousCommitSha} end`,
+  sql`${snapshots.indexVersion} > 0`,
+);
+/** A public repository whose root manifest does not keep it out (`search.hub: false`). */
+const SEARCHED = and(
+  eq(repos.visibility, "public"),
+  sql`not exists (select 1 from ${indexEntries} m where m.snapshot_id = ${snapshots.id} and m.path = 'SKILLCDN.md' and m.kind = 'manifest' and (m.front_matter -> 'search' ->> 'hub') = 'false')`,
+);
+
+/** The ids of the snapshots the search across packs covers, or of the one named if it is one. */
+const searchedSnapshots = (runner: Runner, only?: string) =>
+  runner
+    .select({ id: snapshots.id })
+    .from(repos)
+    .innerJoin(repoRefs, DEFAULT_BRANCH)
+    .innerJoin(snapshots, SERVED)
+    .where(and(SEARCHED, only === undefined ? undefined : eq(snapshots.id, only)));
+
+// The words of the search across packs are counted and matched in a copy of the entries it
+// searches (ADR-0104). The index of the search vectors holds every commit a deployment keeps, and
+// a word looked up in it read the row of every entry that holds the word, most of them of commits
+// no search covers, before they were turned away: the count of a deployment that had been idle
+// waited seconds for those reads. The copy holds the findable entries of the snapshots searched
+// and their vectors, and nothing else. A snapshot is copied in the transaction that writes its
+// index where it is searched then, and by the worker's pass otherwise, which also drops what is
+// searched no longer. A snapshot searched and not copied as its index is now is read as before,
+// from the entries, so that nothing is missed and nothing is counted twice.
+
+/** How many snapshots one pass of {@link syncHubEntries} copies: the rest wait for the next. */
+export const HUB_COPY_LIMIT = 1000;
+
+/**
+ * Copies the findable entries of a snapshot to `hub_entries`, with the row of `hub_snapshots` that
+ * says so, where the search across packs covers it and they are not copied as its index is now.
+ * True where it copied. Runs in the caller's transaction: its own, or the one that wrote the
+ * index, which holds the snapshot's row already.
+ */
+export async function copyHubSnapshot(tx: Runner, snapshotId: string): Promise<boolean> {
+  // An index written meanwhile takes the snapshot's row for update, and waits for this, or this
+  // for it: the copy is of one index, and its row says which.
+  const held = await tx.execute(
+    sql`select 1 from ${snapshots} where ${snapshots.id} = ${snapshotId} for key share`,
+  );
+  if (held.rows.length === 0 || (await searchedSnapshots(tx, snapshotId)).length === 0) {
+    return false;
+  }
+  await tx.execute(sql`
+    delete from ${hubSnapshots}
+    where ${hubSnapshots.snapshotId} = ${snapshotId}
+      and ${hubSnapshots.indexedAt} is distinct from
+        (select s.indexed_at from ${snapshots} s where s.id = ${snapshotId})`);
+  const marked = await tx.execute(sql`
+    insert into ${hubSnapshots} (snapshot_id, indexed_at, entries)
+    select s.id, s.indexed_at,
+      (select count(*)::int from ${indexEntries} where ${indexEntries.snapshotId} = s.id and ${FINDABLE})
+    from ${snapshots} s where s.id = ${snapshotId} and s.indexed_at is not null
+    on conflict do nothing
+    returning snapshot_id`);
+  if (marked.rows.length === 0) {
+    return false;
+  }
+  await tx.execute(sql`
+    insert into ${hubEntries} (snapshot_id, path, search)
+    select ${indexEntries.snapshotId}, ${indexEntries.path}, ${indexEntries.search}
+    from ${indexEntries}
+    where ${indexEntries.snapshotId} = ${snapshotId} and ${FINDABLE}
+    order by ${indexEntries.path}`);
+  return true;
+}
+
+/**
+ * Drops every copy, as a deployment that no longer searches across its packs does. Says how many
+ * snapshots' copies went.
+ */
+export async function dropHubEntries(database: Database): Promise<number> {
+  const dropped = await drizzleOf(database).execute(sql`delete from ${hubSnapshots}`);
+  return dropped.rowCount ?? 0;
+}
+
+/** What one pass of {@link syncHubEntries} did. */
+export interface HubCopying {
+  /** Snapshots whose copies went: searched no longer, or indexed since. */
+  readonly dropped: number;
+  /** Snapshots copied. */
+  readonly copied: number;
+  /** Snapshots searched and still not copied, for the next pass. */
+  readonly left: number;
+}
+
+/**
+ * Brings the copy of the entries searched across the packs in line with what is searched now
+ * (ADR-0104): drops the copies of snapshots no longer searched, or indexed since they were
+ * copied, and copies those searched without one, at most `limit`, each in a transaction of its
+ * own. What a search covers changes when a default branch moves to a commit with an index, or a
+ * repository becomes public, which writes no index, and when an index is written by a build
+ * before this one, which copies nothing.
+ */
+export async function syncHubEntries(
+  database: Database,
+  limit: number = HUB_COPY_LIMIT,
+): Promise<HubCopying> {
+  const db = drizzleOf(database);
+  const dropped = await db.execute(sql`
+    delete from ${hubSnapshots} h
+    where h.snapshot_id not in ${searchedSnapshots(db)}
+      or h.indexed_at is distinct from (select s.indexed_at from ${snapshots} s where s.id = h.snapshot_id)`);
+  const missing = await db.execute<{ id: string }>(sql`
+    select x.id from ${searchedSnapshots(db)} x
+    where not exists (select 1 from ${hubSnapshots} h where h.snapshot_id = x.id)
+    order by x.id`);
+  let copied = 0;
+  for (const { id } of missing.rows.slice(0, Math.max(0, limit))) {
+    if (await db.transaction((tx) => copyHubSnapshot(tx, id))) {
+      copied += 1;
+    }
+  }
+  return {
+    dropped: dropped.rowCount ?? 0,
+    copied,
+    left: Math.max(0, missing.rows.length - Math.max(0, limit)),
+  };
 }
 
 /** An entry of one of the packs searched, with the snapshot it belongs to. */
@@ -144,9 +269,10 @@ type Runner = Pick<Drizzle, "select" | "execute">;
 const among = (snapshotIds: readonly string[]) =>
   sql`${indexEntries.snapshotId} = any(${sql.param([...snapshotIds])}::uuid[])`;
 
-// The entries that hold a word are taken from the index of the search vectors, and narrowed to
-// the snapshots searched as they are read (ADR-0090, ADR-0098). Three things in how the
-// statements are written keep a word to what it has to cost.
+// The entries that hold a word are taken from the index of the search vectors, of the copy
+// (ADR-0104) or of the entries, and narrowed to the snapshots searched as they are read
+// (ADR-0090, ADR-0098). Three things in how the statements are written keep a word to what it
+// has to cost.
 //
 // The word reaches the comparison as a value the planner does not look into, a row of a function
 // or a subquery, so that it expects few entries to hold it and goes through the index. Left to
@@ -167,14 +293,6 @@ const among = (snapshotIds: readonly string[]) =>
 // column back into every use.
 
 /**
- * `offset 0` for a read made with the query builder, which leaves an offset of the number 0 out
- * of what it writes, and with it the one thing the offset is here for: the planner writes
- * nothing into a read that has one. The builder writes whatever it is handed that is not zero
- * to it, so it is handed the text.
- */
-const FENCE = sql`0` as unknown as number;
-
-/**
  * The stored vector as a value of its own: a copy that changes nothing, since the weight is set
  * on the lexemes of an empty list. A concatenation with an empty vector says the same and
  * costs several times the copy, where it was measured.
@@ -182,76 +300,139 @@ const FENCE = sql`0` as unknown as number;
 const unpackedOf = (vector: SQL): SQL => sql`setweight(${vector}, 'D', '{}'::text[])`;
 
 /**
+ * The snapshots searched, parted into those whose entries are copied as their index is now
+ * (ADR-0104) and the rest, which are read from the entries themselves. Read in the transaction of
+ * the statement it is for, which sees the copies as it saw this.
+ */
+interface Parted {
+  readonly copied: readonly string[];
+  readonly rest: readonly string[];
+}
+
+async function partedOf(runner: Runner, snapshotIds: readonly string[]): Promise<Parted> {
+  const rows = await runner.execute<{ snapshot_id: string }>(sql`
+    select h.snapshot_id from ${hubSnapshots} h
+    join ${snapshots} s on s.id = h.snapshot_id and s.indexed_at = h.indexed_at
+    where h.snapshot_id = any(${sql.param([...snapshotIds])}::uuid[])`);
+  const copied = new Set(rows.rows.map((row) => row.snapshot_id));
+  return {
+    copied: snapshotIds.filter((id) => copied.has(id)),
+    rest: snapshotIds.filter((id) => !copied.has(id)),
+  };
+}
+
+/** The statements of the words read a snapshot that does not change while they run. */
+const UNCHANGING = { isolationLevel: "repeatable read", accessMode: "read only" } as const;
+
+/**
  * The count of the findable entries, as row 0, and of those that hold each lexeme, as the row of
- * its place from 1; a lexeme no entry holds has no row. The total is read from the index of the
+ * its place from 1; a lexeme no entry holds has no row. The total of the copied snapshots is
+ * what their rows of `hub_snapshots` say, and that of the rest is read from the index of the
  * findable entries alone.
  */
-function countStatement(snapshotIds: readonly string[], lexemes: readonly string[]): SQL {
-  const total = sql`select 0 as at, count(*)::int as entries from ${indexEntries} where ${and(among(snapshotIds), FINDABLE)}`;
+function countStatement(parted: Parted, lexemes: readonly string[]): SQL {
+  const { copied, rest } = parted;
+  const totals = [
+    ...(copied.length === 0
+      ? []
+      : [
+          sql`(select coalesce(sum(h.entries), 0)::int from ${hubSnapshots} h where h.snapshot_id = any(${sql.param([...copied])}::uuid[]))`,
+        ]),
+    ...(rest.length === 0
+      ? []
+      : [sql`(select count(*)::int from ${indexEntries} where ${and(among(rest), FINDABLE)})`]),
+  ];
+  const total = sql`select 0 as at, (${sql.join(totals, sql` + `)})::int as entries`;
   if (lexemes.length === 0) {
     return total;
   }
+  const holding = [
+    ...(copied.length === 0
+      ? []
+      : [
+          sql`(select count(*)::int from (
+            select c.snapshot_id from ${hubEntries} c
+            where c.search @@ asked.word::tsquery
+            offset 0
+          ) holding
+          where holding.snapshot_id = any(${sql.param([...copied])}::uuid[]))`,
+        ]),
+    ...(rest.length === 0
+      ? []
+      : [
+          sql`(select count(*)::int from (
+            select e.snapshot_id, e.visible from ${indexEntries} e
+            where e.search @@ asked.word::tsquery
+            offset 0
+          ) holding
+          where holding.visible and holding.snapshot_id = any(${sql.param([...rest])}::uuid[]))`,
+        ]),
+  ];
   const asked = sql.param(lexemes.map((lexeme) => serializeSearchQuery([lexeme])));
+  // Behind its `offset 0` the count of a word is counted once, and not again for the condition
+  // that leaves out a word nothing holds.
   return sql`${total}
     union all
     select asked.at::int, held.entries
     from unnest(${asked}::text[]) with ordinality as asked (word, at)
-    cross join lateral (
-      select count(*)::int as entries
-      from (
-        select e.snapshot_id, e.visible from ${indexEntries} e
-        where e.search @@ asked.word::tsquery
-        offset 0
-      ) holding
-      where holding.visible and holding.snapshot_id = any(${sql.param([...snapshotIds])}::uuid[])
-    ) held
+    cross join lateral (select (${sql.join(holding, sql` + `)})::int as entries offset 0) held
     where held.entries > 0`;
 }
 
+/**
+ * The findable entries that hold any of the lexemes, best first and at most `limit`: those of
+ * the copied snapshots matched in the copy, the rest in the entries, each with its vector
+ * unpacked once (ADR-0098), and the columns of an entry read for those answered alone.
+ */
 function wordsStatement(
-  runner: Runner,
-  snapshotIds: readonly string[],
+  parted: Parted,
   lexemes: readonly string[],
   weights: readonly number[] | undefined,
   limit: number,
-) {
-  // The entries that hold a word, as the index of the vectors names them.
-  const holding = runner
-    .select({
-      ...entryColumns,
-      // Every entry with a vector is searchable; said by a name, for the reads around this one.
-      searchable: sql<boolean>`true`.as("searchable"),
-      snapshotId: indexEntries.snapshotId,
-      visible: indexEntries.visible,
-      search: indexEntries.search,
-    })
-    .from(indexEntries)
-    .where(sql`${indexEntries.search} @@ (select ${serializeSearchQuery(lexemes)}::tsquery)`)
-    .offset(FENCE)
-    .as("holding");
-  // Those of the snapshots searched, each with its vector unpacked once.
-  const { visible, search, ...kept } = holding._.selectedFields;
-  const found = runner
-    .select({ ...kept, unpacked: unpackedOf(sql`${search}`).as("unpacked") })
-    .from(holding)
-    .where(
-      and(
-        sql`${visible}`,
-        sql`${holding.snapshotId} = any(${sql.param([...snapshotIds])}::uuid[])`,
-      ),
-    )
-    .offset(FENCE)
-    .as("found");
-  const { unpacked, ...columns } = found._.selectedFields;
-  return runner
-    .select(columns)
-    .from(found)
-    .orderBy(
-      sql`${rankOf(lexemes, weights, sql`${unpacked}`)} desc`,
-      found.snapshotId,
-      sql`${found.path} collate "C"`,
-    )
-    .limit(limit);
+): SQL {
+  const { copied, rest } = parted;
+  const words = sql`(select ${serializeSearchQuery(lexemes)}::tsquery)`;
+  const branches = [
+    ...(copied.length === 0
+      ? []
+      : [
+          sql`(select holding.snapshot_id, holding.path, ${unpackedOf(sql`holding.search`)} as unpacked
+          from (
+            select c.snapshot_id, c.path, c.search from ${hubEntries} c
+            where c.search @@ ${words}
+            offset 0
+          ) holding
+          where holding.snapshot_id = any(${sql.param([...copied])}::uuid[])
+          offset 0)`,
+        ]),
+    ...(rest.length === 0
+      ? []
+      : [
+          sql`(select holding.snapshot_id, holding.path, ${unpackedOf(sql`holding.search`)} as unpacked
+          from (
+            select e.snapshot_id, e.path, e.search, e.visible from ${indexEntries} e
+            where e.search @@ ${words}
+            offset 0
+          ) holding
+          where holding.visible and holding.snapshot_id = any(${sql.param([...rest])}::uuid[])
+          offset 0)`,
+        ]),
+  ];
+  const columns = sql.join(
+    Object.entries(entryColumns).map(([name, column]) => sql`${column} as ${sql.identifier(name)}`),
+    sql`, `,
+  );
+  return sql`
+    select ${columns}, ${indexEntries.snapshotId} as "snapshotId"
+    from (
+      select found.snapshot_id, found.path, ${rankOf(lexemes, weights, sql`found.unpacked`)} as rank
+      from (${sql.join(branches, sql` union all `)}) found
+      order by rank desc, found.snapshot_id, found.path collate "C"
+      limit ${limit}
+    ) top
+    join ${indexEntries}
+      on ${indexEntries.snapshotId} = top.snapshot_id and ${indexEntries.path} = top.path
+    order by top.rank desc, top.snapshot_id, top.path collate "C"`;
 }
 
 /** A part of a body a search picked: the body, the part's place in it, and how many sections it has. */
@@ -429,10 +610,10 @@ export async function countHubLexemes(
   const rows = await drizzleOf(database).transaction(async (tx) => {
     await tx.execute(bounded(timeoutMs));
     const result = await tx.execute<{ at: number; entries: number }>(
-      countStatement(snapshotIds, lexemes),
+      countStatement(await partedOf(tx, snapshotIds), lexemes),
     );
     return result.rows;
-  });
+  }, UNCHANGING);
   const counted = new Map(rows.map((row) => [Number(row.at), Number(row.entries)]));
   return { total: counted.get(0) ?? 0, counts: lexemes.map((_, at) => counted.get(at + 1) ?? 0) };
 }
@@ -455,8 +636,12 @@ export async function searchHubEntries(
   }
   return drizzleOf(database).transaction(async (tx) => {
     await tx.execute(bounded(timeoutMs));
-    return wordsStatement(tx, snapshotIds, lexemes, weights, limit);
-  });
+    const found = await tx.execute<Record<string, unknown>>(
+      wordsStatement(await partedOf(tx, snapshotIds), lexemes, weights, limit),
+    );
+    // The statement names its columns as the record does.
+    return found.rows as unknown as HubEntryRecord[];
+  }, UNCHANGING);
 }
 
 /**
@@ -518,7 +703,10 @@ export async function searchHubSectionVectors(
 export interface HubStatementReading {
   /** How long the statement ran, in milliseconds. */
   readonly ms: number;
-  /** The rows of `index_entries` it visited: those it kept and those a condition turned away. */
+  /**
+   * The rows of `index_entries` and of its copy `hub_entries` it visited: those it kept and those
+   * a condition turned away.
+   */
   readonly entries: number;
   /** The pages it read, wherever they were. */
   readonly pages: number;
@@ -567,7 +755,7 @@ function readingOf(explained: unknown): HubStatementReading {
   const scans = new Set<string>();
   const walk = (node: PlanNode): void => {
     const loops = node["Actual Loops"] ?? 1;
-    if (node["Relation Name"] === "index_entries") {
+    if (node["Relation Name"] === "index_entries" || node["Relation Name"] === "hub_entries") {
       entries +=
         ((node["Actual Rows"] ?? 0) +
           (node["Rows Removed by Filter"] ?? 0) +
@@ -659,12 +847,13 @@ export async function readHubStatements(
       scans: [...new Set([...picking.scans, ...comparing.scans])].sort(),
     };
   };
+  const parted = await partedOf(drizzleOf(database), snapshotIds);
   return {
-    count: await explain(() => countStatement(snapshotIds, lexemes)),
+    count: await explain(() => countStatement(parted, lexemes)),
     words:
       lexemes.length === 0
         ? undefined
-        : await explain((tx) => wordsStatement(tx, snapshotIds, lexemes, weights, limit).getSQL()),
+        : await explain(() => wordsStatement(parted, lexemes, weights, limit)),
     meaning: meaning === undefined ? undefined : await explainMeaning(meaning),
   };
 }

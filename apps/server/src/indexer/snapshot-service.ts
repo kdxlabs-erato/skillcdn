@@ -66,6 +66,11 @@ export interface SnapshotServiceOptions {
    */
   readonly minServableIndexVersion?: number | undefined;
   /**
+   * Whether the deployment searches across its packs (`HUB_SEARCH`): an index written of a
+   * snapshot that search covers is copied for its words then (ADR-0104). True unless said.
+   */
+  readonly hub?: boolean | undefined;
+  /**
    * What follows an index this process wrote: the embedding of its sections, queued for the
    * worker (ADR-0064). A failure here is logged and the index stands; the worker's sweep finds
    * what was not queued.
@@ -367,7 +372,9 @@ export class SnapshotService {
         signal,
       });
       signal.throwIfAborted();
-      const written = await writeSnapshotIndex(database, scope, owner, index, clock.now());
+      const written = await writeSnapshotIndex(database, scope, owner, index, clock.now(), {
+        hub: this.#options.hub ?? true,
+      });
       if (!written) {
         log.warn("lost the indexing lease before the index was written");
         return;

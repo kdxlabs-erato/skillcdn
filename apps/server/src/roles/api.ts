@@ -373,6 +373,7 @@ export function createApi(
     concurrency: config.indexing.concurrency,
     leaseMs: config.indexing.leaseMs,
     minServableIndexVersion: config.indexing.minServableIndexVersion,
+    hub: hubConfig.enabled,
     newLeaseOwner: randomUUID,
     onIndexed:
       triggers === undefined ? undefined : (mount, snapshot) => triggers.onIndexed(mount, snapshot),

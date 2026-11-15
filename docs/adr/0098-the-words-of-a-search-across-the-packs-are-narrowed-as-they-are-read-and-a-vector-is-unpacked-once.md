@@ -1,6 +1,6 @@
 # ADR-0098: The words of a search across the packs are narrowed as they are read, and a vector is unpacked once
 
-- Status: Accepted
+- Status: Accepted; in point 1, where a word is looked up for the snapshots that are copied is replaced by [ADR-0104](0104-the-words-of-a-search-across-the-packs-are-counted-and-matched-in-a-copy-of-the-entries-it-searches.md) (the index of the copy's vectors, which holds the entries searched alone)
 - Date: 2026-11-14
 - Builds on [ADR-0090](0090-a-search-across-the-packs-reads-what-is-searchable-and-an-index-of-a-table-in-use-is-built-without-holding-its-writes.md) (a word is looked up in the index of the vectors and then narrowed to the snapshots searched) and [ADR-0091](0091-a-search-across-the-packs-answers-with-what-answered-in-time-and-its-comparison-by-meaning-waits-for-the-words.md) (the words answer first). It replaces how ADR-0090 narrows what the index finds: by the ids of every entry that holds a word, handed on as a whole.
 

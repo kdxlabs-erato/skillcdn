@@ -23,6 +23,7 @@ import {
   AHEAD_QUEUE,
   EMBED_QUEUE,
   ensureJobQueues,
+  HUB_QUEUE,
   INDEX_QUEUE,
   type IndexJob,
   LOOK_QUEUE,
@@ -406,6 +407,7 @@ describe("the worker role, with the indexing ahead of requests on", () => {
     [AHEAD_QUEUE]: { retryLimit: 1, retryDelaySeconds: 1, expireInSeconds: 60 },
     [LOOK_QUEUE]: { retryLimit: 0, retryDelaySeconds: 1, expireInSeconds: 60 },
     [PRUNE_QUEUE]: { retryLimit: 0, retryDelaySeconds: 1, expireInSeconds: 60 },
+    [HUB_QUEUE]: { retryLimit: 0, retryDelaySeconds: 1, expireInSeconds: 60 },
   } satisfies typeof QUEUE_SETTINGS;
   let own: TestDatabase;
   let jobs: JobQueue;
@@ -447,6 +449,7 @@ describe("the worker role, with the indexing ahead of requests on", () => {
     // nothing keeps, as this deployment configures them; no embedding without an embedder.
     expect((await worker.start()).queues).toEqual([
       INDEX_QUEUE,
+      HUB_QUEUE,
       AHEAD_QUEUE,
       LOOK_QUEUE,
       PRUNE_QUEUE,

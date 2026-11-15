@@ -20,6 +20,7 @@ import {
   readHubStatements,
   searchHubEntries,
   searchHubSectionVectors,
+  syncHubEntries,
 } from "../queries/hub.js";
 import { saveCachedRef, saveRepository } from "../queries/repos.js";
 import { claimSnapshot, ensureSnapshot, writeSnapshotIndex } from "../queries/snapshots.js";
@@ -39,12 +40,13 @@ import { fillPartVectors, supportsSectionVectors, type VectorKey } from "../quer
 // directories given, so that the vectors are as large as a pack's; every section of a pack's
 // entries gets a vector of random numbers, which costs a comparison what a real one does, and
 // the vectors of the parts, and the sections at half precision, are made from them as the
-// worker's sweep makes them (ADR-0092, ADR-0103). A
-// second `fill` under another `--series` adds as much again.
+// worker's sweep makes them (ADR-0092, ADR-0103). The findable entries of the commits served are
+// copied for the words as an index is written, and by the worker's pass (ADR-0104). A second
+// `fill` under another `--series` adds as much again.
 //
 // `measure` asks five questions of the three statements, without a time limit, and prints for
-// each how long it ran, how many rows of `index_entries` and how many pages it read and through
-// which indexes. The meaning is measured both ways: `meaning`, the `--parts` parts nearest the
+// each how long it ran, how many rows of `index_entries` and of their copy and how many pages it
+// read, and through which indexes. The meaning is measured both ways: `meaning`, the `--parts` parts nearest the
 // query picked and their sections compared, and `every`, every section compared, as it was
 // before the parts and is with `HUB_SEARCH_PARTS=0`. Random vectors have no neighbours, so what
 // the two find differs here; what they read is what is measured. The rows and the pages are the numbers to hold on to: a disk on the machine of
@@ -297,6 +299,12 @@ async function fill(database: Database, options: FillOptions): Promise<void> {
   }
   // What the planner knows of the tables is what autovacuum would have told it by now.
   await drizzleOf(database).execute(sql`vacuum (analyze) index_entries`);
+  // Copied as each index was written; whatever that left is the pass's.
+  for (let left = 1; left > 0; ) {
+    left = (await syncHubEntries(database)).left;
+  }
+  await drizzleOf(database).execute(sql`vacuum (analyze) hub_snapshots`);
+  await drizzleOf(database).execute(sql`vacuum (analyze) hub_entries`);
   if (vectors) {
     await drizzleOf(database).execute(sql`vacuum (analyze) section_vectors`);
     let made = 0;

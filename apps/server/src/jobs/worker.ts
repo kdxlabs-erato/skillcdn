@@ -31,6 +31,7 @@ import { MountService } from "../mounts/mount-service.js";
 import { createOperatorEntitlements } from "../operator/entitlements.js";
 import { OperatorLists } from "../operator/lists.js";
 import { embedSnapshotSlice } from "./embed-snapshot.js";
+import { copyHubEntries } from "./hub-entries.js";
 import { createIndexAhead } from "./index-ahead.js";
 import { indexRepositoryJob } from "./index-repository.js";
 import { pruneIndexes } from "./prune.js";
@@ -39,6 +40,9 @@ import {
   EMBED_QUEUE,
   embedJobSchema,
   ensureJobQueues,
+  HUB_QUEUE,
+  HUB_SCHEDULE,
+  HUB_SCHEDULE_KEY,
   INDEX_QUEUE,
   indexJobSchema,
   LOOK_QUEUE,
@@ -58,10 +62,12 @@ import { createEmbedTriggers } from "./triggers.js";
 
 // What the worker role does with the queue (ADR-0064, point 3), wired to its ports so that a
 // test runs it against a fixture git host and a fake embedder as the role runs it against the
-// real ones: the designated indexing always; the indexing ahead of requests, a pass every minute
-// and a job per repository, unless the deployment turns it off (ADR-0085); the hourly pass that
-// removes the indexes nothing points at and nobody read (ADR-0086); and where an embedder is
-// configured and the database keeps vectors, the slices of embedding and the hourly sweep.
+// real ones: the designated indexing always; the pass every minute that keeps the copy of the
+// entries the search across packs reads its words in (ADR-0104), always; the indexing ahead of
+// requests, a pass every minute and a job per repository, unless the deployment turns it off
+// (ADR-0085); the hourly pass that removes the indexes nothing points at and nobody read
+// (ADR-0086); and where an embedder is configured and the database keeps vectors, the slices of
+// embedding and the hourly sweep.
 
 /** How much older than its TTL a cached fact may be when the git host cannot be asked. */
 const STALE_GRACE_FACTOR = 10;
@@ -73,6 +79,11 @@ export type WorkerConfig = Pick<Config, "mounts" | "indexing"> & {
   readonly scope: EmbeddingScope;
   /** The directory of packs served at `local` addresses (ADR-0071); left out, there is none. */
   readonly packs?: Config["packs"];
+  /**
+   * Whether the deployment searches across its packs (`HUB_SEARCH`), which the copy of the
+   * entries it searches is kept for (ADR-0104); true unless said.
+   */
+  readonly hub?: boolean | undefined;
 };
 
 export interface WorkerPorts {
@@ -150,6 +161,7 @@ export function createWorker(config: WorkerConfig, ports: WorkerPorts): Worker {
     // A worker indexes what it is asked to, whatever the api processes are told to.
     concurrency: Math.max(1, config.indexing.concurrency),
     leaseMs: config.indexing.leaseMs,
+    hub: config.hub ?? true,
     newLeaseOwner: randomUUID,
   });
   const key = embedder === undefined ? undefined : vectorKeyOf(embedder);
@@ -209,6 +221,15 @@ export function createWorker(config: WorkerConfig, ports: WorkerPorts): Worker {
           ),
         ),
       );
+      await jobs.work(
+        HUB_QUEUE,
+        { concurrency: 1, pollSeconds },
+        handling(sweepJobSchema, () =>
+          copyHubEntries({ database, logger, hub: config.hub ?? true }),
+        ),
+      );
+      await jobs.schedule(HUB_QUEUE, HUB_SCHEDULE, {}, HUB_SCHEDULE_KEY);
+      queues.push(HUB_QUEUE);
       const { ahead } = config.indexing;
       if (ahead.scope === "none") {
         // A deployment that turned it off after running it: the schedule goes with it.

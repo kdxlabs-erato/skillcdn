@@ -17,6 +17,8 @@ export const AHEAD_QUEUE = "index-ahead";
 export const LOOK_QUEUE = "look-ahead";
 /** The pass that removes the indexes nothing points at and nobody read (ADR-0086). */
 export const PRUNE_QUEUE = "prune-indexes";
+/** The pass that keeps the copy of the entries the search across packs reads (ADR-0104). */
+export const HUB_QUEUE = "copy-hub-entries";
 export const JOB_QUEUES = [
   EMBED_QUEUE,
   INDEX_QUEUE,
@@ -24,6 +26,7 @@ export const JOB_QUEUES = [
   AHEAD_QUEUE,
   LOOK_QUEUE,
   PRUNE_QUEUE,
+  HUB_QUEUE,
 ] as const;
 
 /**
@@ -98,6 +101,8 @@ export const QUEUE_SETTINGS: Readonly<Record<(typeof JOB_QUEUES)[number], QueueS
   [AHEAD_QUEUE]: { retryLimit: 2, retryDelaySeconds: 60, expireInSeconds: 1800 },
   [LOOK_QUEUE]: { retryLimit: 0, retryDelaySeconds: 60, expireInSeconds: 300 },
   [PRUNE_QUEUE]: { retryLimit: 1, retryDelaySeconds: 60, expireInSeconds: 600 },
+  // The next minute's pass does what one that failed did not.
+  [HUB_QUEUE]: { retryLimit: 0, retryDelaySeconds: 60, expireInSeconds: 600 },
 };
 
 /** Makes sure every queue exists with its settings: run by each process at start. */
@@ -161,6 +166,13 @@ export const PRUNE_SCHEDULE_KEY = "hourly";
 /** Hourly, at the top of the hour. */
 export const SWEEP_SCHEDULE = "0 * * * *";
 export const SWEEP_SCHEDULE_KEY = "hourly";
+
+/**
+ * Every minute: a pass with nothing to do is two queries, and a pack the copy does not have yet
+ * is read by every search from the entries of every commit, as before the copy.
+ */
+export const HUB_SCHEDULE = "* * * * *";
+export const HUB_SCHEDULE_KEY = "every-minute";
 
 /**
  * What makes two embed jobs the same job: the snapshot, the key and where the slice starts. One

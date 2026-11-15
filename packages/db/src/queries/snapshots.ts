@@ -1,7 +1,8 @@
 import type { LicenseFact, SnapshotDiagnostic, SnapshotIndex } from "@skillcdn/core";
 import { and, eq, lt, lte, or, sql } from "drizzle-orm";
 import { type Database, drizzleOf } from "../client.js";
-import { indexEntries, snapshotEmbeddings, snapshots } from "../schema.js";
+import { hubSnapshots, indexEntries, snapshotEmbeddings, snapshots } from "../schema.js";
+import { copyHubSnapshot } from "./hub.js";
 import type { RepoScope } from "./repos.js";
 
 export type SnapshotStatus = "pending" | "indexing" | "ready" | "failed";
@@ -234,7 +235,9 @@ const ENTRY_BATCH_SIZE = 200;
 /**
  * Replaces the entries of a snapshot and marks it ready, in one transaction, so readers see
  * either no index or a complete one. Bodies must already be in the blob store. Returns false,
- * and writes nothing, when the claim named `owner` no longer holds the snapshot.
+ * and writes nothing, when the claim named `owner` no longer holds the snapshot. `hub` says
+ * whether the deployment searches across its packs, which is what the copy of the entries of a
+ * snapshot it searches is for (ADR-0104).
  */
 export async function writeSnapshotIndex(
   database: Database,
@@ -242,6 +245,7 @@ export async function writeSnapshotIndex(
   owner: string,
   index: SnapshotIndex,
   now: Date,
+  { hub = true }: { readonly hub?: boolean } = {},
 ): Promise<boolean> {
   return drizzleOf(database).transaction(async (tx) => {
     const [held] = await tx
@@ -255,9 +259,11 @@ export async function writeSnapshotIndex(
     }
     // A retry starts clean: whatever an interrupted attempt left behind goes first. A new index
     // may name other bodies, so what was embedded of the old one no longer says the snapshot is
-    // done; the vectors themselves stay with their bodies (ADR-0064).
+    // done; the vectors themselves stay with their bodies (ADR-0064). The copy of the old entries
+    // for the search across packs goes with them (ADR-0104).
     await tx.delete(indexEntries).where(eq(indexEntries.snapshotId, scope.snapshotId));
     await tx.delete(snapshotEmbeddings).where(eq(snapshotEmbeddings.snapshotId, scope.snapshotId));
+    await tx.delete(hubSnapshots).where(eq(hubSnapshots.snapshotId, scope.snapshotId));
 
     for (let start = 0; start < index.entries.length; start += ENTRY_BATCH_SIZE) {
       const batch = index.entries.slice(start, start + ENTRY_BATCH_SIZE);
@@ -301,6 +307,11 @@ export async function writeSnapshotIndex(
         updatedAt: now,
       })
       .where(scoped(scope));
+    // Where the index is the one a search across packs covers now, as the index of a default
+    // branch's newest commit is, its entries are copied for that search with it (ADR-0104).
+    if (hub) {
+      await copyHubSnapshot(tx, scope.snapshotId);
+    }
     return true;
   });
 }

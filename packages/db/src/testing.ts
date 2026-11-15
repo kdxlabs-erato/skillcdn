@@ -73,14 +73,16 @@ export async function createTestDatabase(adminUrl: string): Promise<TestDatabase
 
 /**
  * For a test of a statement that runs out of its time: keeps every statement that reads the
- * entries waiting, until the function it answers with is called. The test lets go within the
- * time a transaction may stay idle.
+ * entries, or their copy for the search across packs (ADR-0104), waiting, until the function it
+ * answers with is called. The test lets go within the time a transaction may stay idle.
  */
 export async function holdIndexEntries(database: Database): Promise<() => Promise<void>> {
   const client = await poolOf(database).connect();
   try {
     await client.query("begin");
-    await client.query("lock table index_entries in access exclusive mode");
+    await client.query(
+      "lock table index_entries, hub_snapshots, hub_entries in access exclusive mode",
+    );
   } catch (error) {
     client.release(true);
     throw error;
