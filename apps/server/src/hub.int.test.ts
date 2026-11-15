@@ -224,9 +224,17 @@ describe("the search across every pack", () => {
 
     // A day on, the host is asked before a result is shown, and shows the name to nobody.
     now += 24 * 60 * 60_000;
+    const logged = h.logs.length;
     const covered = (await search(h, "query=conventional+commits")).packs;
     expect(repositoryCalls()).toBeGreaterThan(asked);
     expect(await addresses()).not.toContain("/gh/acme/single-skill");
+    // The log says which way it left: the host said so when a result was to be shown.
+    expect(h.logs.slice(logged)).toContainEqual(
+      expect.objectContaining({
+        renamed: false,
+        msg: "a pack of a search is not public now, and is left out of it",
+      }),
+    );
     // The index has it as public no longer: the packs read again do not cover it, and the
     // host is not asked about it again.
     now += 20_000;

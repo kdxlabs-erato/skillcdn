@@ -203,6 +203,10 @@ export function createHubSearch(options: HubSearchOptions): HubSearch {
             // one as not public, or its name leads elsewhere, and the next search reads again.
             confirmedHere.delete(pack.repoId);
             cached = undefined;
+            logger.info(
+              { repo: pack.repoId, renamed: standing.status === "public" },
+              "a pack of a search is not public now, and is left out of it",
+            );
             return "not public";
           },
           (error: unknown): Standing => {
