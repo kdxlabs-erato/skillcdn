@@ -1300,14 +1300,12 @@ describe("a document made from the pack's documents (ADR-0083)", () => {
 });
 
 describe("the process the build runs in (ADR-0106)", () => {
-  // Two hundred documents of some four thousand characters: far more text than one turn reads.
+  // Eighty documents of some four thousand characters, each with a link to a section: several
+  // turns of text, through the documents and through their links.
   const documents = Object.fromEntries(
-    Array.from({ length: 200 }, (_, at) => [
+    Array.from({ length: 80 }, (_, at) => [
       `docs/page-${String(at).padStart(3, "0")}.md`,
-      `# Page ${at}
-
-${"How the office runs, with a [link](page-000.md#page-0). ".repeat(70)}
-`,
+      `# Page ${at}\n\nSee [the first page](page-000.md#page-0).\n\n${"How the office runs on a Monday. ".repeat(120)}\n`,
     ]),
   );
   const total = Object.values(documents).reduce((sum, text) => sum + text.length, 0);
