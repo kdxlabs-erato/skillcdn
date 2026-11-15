@@ -371,13 +371,16 @@ function turboInputs(task: string): readonly RegExp[] {
 describe("the files the navigation publishes", () => {
   // Read once for the tests below: loading the documentation renders every page of it, and
   // doing so for each question ran past the time a test has on a loaded machine.
+  let docs: ReturnType<typeof loadDocs> | undefined;
+  const checkout = (): ReturnType<typeof loadDocs> => {
+    docs ??= loadDocs(REPOSITORY_ROOT);
+    return docs;
+  };
   let files: string[] | undefined;
   const published = (): string[] => {
     files ??= [
       NAV_FILE,
-      ...loadDocs(REPOSITORY_ROOT).catalog.sections.flatMap((section) =>
-        section.pages.map((page) => page.file),
-      ),
+      ...checkout().catalog.sections.flatMap((section) => section.pages.map((page) => page.file)),
     ];
     return files;
   };
@@ -414,9 +417,8 @@ describe("the files the navigation publishes", () => {
     // The format's own license goes with its specification.
     expect(existsSync(join(root, "docs", "specs", "LICENSE"))).toBe(true);
     const packaged = loadDocs(root, { complete: false });
-    const checkout = loadDocs(REPOSITORY_ROOT);
-    expect(packaged.catalog).toEqual(checkout.catalog);
-    expect(packaged.content).toEqual(checkout.content);
+    expect(packaged.catalog).toEqual(checkout().catalog);
+    expect(packaged.content).toEqual(checkout().content);
   });
 
   it("are inputs of the web build and its tests in turbo.json, so that a change rebuilds the pages", () => {
