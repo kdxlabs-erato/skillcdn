@@ -144,7 +144,7 @@ pnpm install          # needs pnpm 12+; the Node.js runtime is pinned and fetche
 pnpm check            # lint, build, typecheck, test
 ```
 
-Setup details and the contribution process are in [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the codebase, for people and AI agents alike, are in [CLAUDE.md](CLAUDE.md). Secrets are never committed; `.env.example` holds example values only.
+Setup details and the contribution process are in [CONTRIBUTING.md](CONTRIBUTING.md). The rules of the codebase, for people and AI agents alike, are in [AGENTS.md](AGENTS.md). Secrets are never committed; `.env.example` holds example values only.
 
 ## License
 

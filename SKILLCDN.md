@@ -6,9 +6,7 @@ documents:
   - deploy
   - packages/cli
 exclude:
-  - deploy/CLAUDE.md
   - packages/cli/CHANGELOG.md
-  - packages/cli/CLAUDE.md
   - packages/cli/package.json
   - packages/cli/src
   - packages/cli/tsconfig.build.json

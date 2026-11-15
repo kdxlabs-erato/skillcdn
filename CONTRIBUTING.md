@@ -2,13 +2,13 @@
 
 Thanks for your interest. SkillCDN is pre-alpha and moving quickly, so please open an issue before starting anything larger than a small fix: the design may already be changing under you.
 
-The rules for working in this codebase (conventions, testing, commits, documentation) are in [`CLAUDE.md`](CLAUDE.md). They apply to people and AI agents alike. This file covers setup and the contribution process.
+The rules for working in this codebase (conventions, testing, commits, documentation) are in [`AGENTS.md`](AGENTS.md), and those of a workspace under "Rules" in its `README.md`. They apply to people and AI agents alike. This file covers setup and the contribution process.
 
 ## Setup
 
 You need:
 
-- **pnpm 12 or newer** (`npm install -g pnpm@latest`, or a Corepack recent enough to start pnpm 12; the one bundled with Node.js 22 is not, see the gotchas in `CLAUDE.md`). pnpm then pins its own exact version and downloads the pinned Node.js 24 runtime for project scripts; both are verified against the lockfile.
+- **pnpm 12 or newer** (`npm install -g pnpm@latest`, or a Corepack recent enough to start pnpm 12; the one bundled with Node.js 22 is not, see the gotchas in `AGENTS.md`). pnpm then pins its own exact version and downloads the pinned Node.js 24 runtime for project scripts; both are verified against the lockfile.
 - **Docker**, for the local PostgreSQL and for building the image.
 - Node.js 24 as your system Node.js is recommended so editors and ad-hoc commands match. It is not required for pnpm scripts.
 
@@ -22,7 +22,7 @@ pnpm dev
 
 ## Process
 
-1. Make one logical change. Add tests. Update the docs listed in the "Documentation protocol" table in `CLAUDE.md`. A change to a published package (`packages/core`, `packages/indexer`, `packages/reader`, `packages/client`, `packages/serve`, `packages/cli`, `packages/brand`) also adds a changeset: `pnpm changeset`.
+1. Make one logical change. Add tests. Update the docs listed in the "Documentation protocol" table in `AGENTS.md`. A change to a published package (`packages/core`, `packages/indexer`, `packages/reader`, `packages/client`, `packages/serve`, `packages/cli`, `packages/brand`) also adds a changeset: `pnpm changeset`.
 2. Commit with [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): summary`.
 3. Run `pnpm check`.
 4. **Maintainers** currently push directly to `main` (`git pull --rebase` first); a pull-request flow will replace this later. **Everyone else:** fork, open a pull request against `main` and fill in the checklist.

@@ -500,7 +500,7 @@
 }
 
 /* A heading a search result opens the file at lands under the header, with a little air; the
-   document's scroll padding clears the header itself (see the gotcha in CLAUDE.md). */
+   document's scroll padding clears the header itself (see the gotcha in this workspace's README.md). */
 .document :is(h1, h2, h3, h4, h5, h6) {
   scroll-margin-top: var(--space-3);
 }

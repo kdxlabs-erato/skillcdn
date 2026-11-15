@@ -71,3 +71,17 @@ Everything public is exported from `src/index.ts`. There are no deep imports.
 ## Status
 
 Pre-1.0: the surface may change between minor versions, and the changelog says what changed. The specifications linked above describe the contracts; the code follows them.
+
+## Rules
+
+For whoever changes this package: read the root [`AGENTS.md`](https://github.com/skillcdn/skillcdn/blob/main/AGENTS.md) first. This package is the product's contract and its most heavily tested code.
+
+- **Pure.** No `node:` imports, no `process`, no network, no file system. The tsconfig loads no Node.js types on purpose; do not add them.
+- **Deterministic.** No `Date.now()`, `Math.random()` or `crypto.randomUUID()`. Take a clock or an id source as a parameter (a port).
+- **Parsers are total.** Every input yields a typed result or a typed error. They never throw on hostile input and never loop or allocate without a bound. Reject bad input; do not repair it.
+- **Exported types are public contract.** Changing what `src/index.ts` exports for addresses, tool schemas or the skill-repo convention is a spec change: update `docs/specs/` in the same change, and keep it additive.
+- **Ports are small.** An interface describes what the domain needs, in domain terms. It never mirrors a vendor SDK.
+- **Runtime dependencies are nearly forbidden.** This package also ships to browsers. A new dependency here needs a stronger case than anywhere else.
+- **The YAML library resolves well-known tags (`!!timestamp`, `!!binary`, `!!set`) under every schema**, including `failsafe`. `parseFrontMatter` rejects tagged nodes for that reason; keep it that way when touching the parser options.
+- **Tests:** table-driven cases next to the code, and always a hostile-input group: traversal, oversized input, deep nesting, odd Unicode, malformed encodings.
+- **A deployment stores the search vector by a cast.** Whatever PostgreSQL's `tsvector` parser rejects (an empty lexeme, a word of 2047 bytes, a vector past its 1,048,575 bytes of lexemes and positions) fails the whole snapshot of the pack, and `skillcdn check` cannot see it. Every lexeme the word rules can emit must be one the parser takes; a text that once broke it goes into `TEXTS` of `packages/db/src/search-parity.int.test.ts`, which casts it on the server.

@@ -1,5 +1,5 @@
 // Every production dependency ships in the image or the web build, so its license must allow
-// that: permissive only, no copyleft and nothing source-available (CLAUDE.md, Dependencies).
+// that: permissive only, no copyleft and nothing source-available (AGENTS.md, Dependencies).
 // Part of `pnpm check`. Reads what pnpm knows about the installed packages; no network.
 import { execFileSync } from "node:child_process";
 import process from "node:process";
@@ -23,7 +23,7 @@ const ALLOWED = new Set([
 
 /**
  * Fonts, bundled unmodified under the SIL Open Font License with their notice beside them
- * (CLAUDE.md, Dependencies; THIRD-PARTY-NOTICES.md): by name, so that nothing else passes as one.
+ * (AGENTS.md, Dependencies; THIRD-PARTY-NOTICES.md): by name, so that nothing else passes as one.
  */
 const FONTS = new Map([["pretendard", "OFL-1.1"]]);
 

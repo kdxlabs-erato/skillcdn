@@ -27,3 +27,13 @@ The adapters retry nothing themselves: a worker retries through its queue, a sea
 ## Tests
 
 The shapes are tested against what real inference servers answered, recorded once in [`fixtures/recorded/`](fixtures/recorded/README.md), so that no test calls a server.
+
+## Rules
+
+For whoever changes this package: read the root [`AGENTS.md`](https://github.com/skillcdn/skillcdn/blob/main/AGENTS.md) first. This package is the two inference adapters of the search by meaning, shared by the server and the command (ADR-0066).
+
+- **Two shapes, no SDK.** The common embeddings API and the common reranking API, as the inference servers share them; a server's own fields are read where they differ in spelling and never required. A new kind of server is configuration, not code, until its shape differs.
+- **Bounded, never retrying.** Every call goes through the gate and the breaker and ends within its timeout; what to do about a failure is the caller's, which `isTransientInferenceError` tells apart. No retry, no queue, no sleep in here.
+- **Nothing of a request in an error.** A refusal keeps a short excerpt of what the server said, with control characters removed; a text that was embedded is never in a message or a log.
+- **`core` only.** The ports come from `@skillcdn/core`; nothing else of the workspace is imported, so that the command carries this without the server's dependencies.
+- **Recorded, not called.** The tests read what a real server answered once ([fixtures/recorded](https://github.com/skillcdn/skillcdn/blob/main/packages/inference/fixtures/recorded/README.md)); a shape that changes is recorded again, never guessed.

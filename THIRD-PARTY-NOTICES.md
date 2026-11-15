@@ -1,6 +1,6 @@
 # Third-party notices
 
-What ships inside the image or the web build under a license of its own, beyond the npm packages, whose licenses travel with them in `node_modules`. Every entry here is bundled on purpose: an installation may have no internet, and the pages allow no foreign source, so a font or an asset can only reach a visitor from the image itself. The rules for adding one are in [`CLAUDE.md`](CLAUDE.md), under Dependencies.
+What ships inside the image or the web build under a license of its own, beyond the npm packages, whose licenses travel with them in `node_modules`. Every entry here is bundled on purpose: an installation may have no internet, and the pages allow no foreign source, so a font or an asset can only reach a visitor from the image itself. The rules for adding one are in [`AGENTS.md`](AGENTS.md), under Dependencies.
 
 ## Pretendard
 
