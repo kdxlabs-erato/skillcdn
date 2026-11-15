@@ -158,6 +158,15 @@ type Command = (typeof COMMANDS)[number];
 export const AGREEMENT_SENTENCE =
   "**Bound to a pack?** Before the first step, run `skillcdn status`: when it names a pack, or `.skillcdn.json` is in this checkout, read that pack's skills and load the one the task calls for (its answer says how).";
 
+/**
+ * What `use` says of the file it wrote, before anything commits it: whether it is committed. A
+ * file that names a deployment of the organization's own or a private pack tells whoever reads
+ * a public repository what the organization keeps to itself, as a console's binding file would
+ * tell of its console.
+ */
+export const COMMIT_LINE =
+  "Commit it, so that every clone reads the same pack, unless the repository is public and the file names a deployment of your own or a private pack: then list it in .gitignore, and run skillcdn use in each clone.";
+
 /** What `use` says after binding: how the agents that work here learn of it. */
 const HAND_OVER = `Tell the agents that work here, in the checkout's agreement (AGENTS.md, or CLAUDE.md where that is the file agents read), in one sentence:
 
@@ -415,9 +424,11 @@ The deployments and repositories a token is kept for, and since when; never the 
 Binds the working directory to a pack: writes ${DIRECTORY_FILE} with the pack's address and, with
 --url, the deployment it is read at; or, for a directory on this machine, the directory as a
 path relative to the file, read with no deployment and no token. A read here or in a directory
-below then needs no <pack>. Meant to be committed: everyone who works in the checkout, and every
-agent they run in it, reads the same pack. It names no token and nothing secret. Afterwards the
-command prints the sentence to put in the checkout's agreement (AGENTS.md, or CLAUDE.md where
+below then needs no <pack>. It names no token and nothing secret, and is meant to be committed,
+so that everyone who works in the checkout, and every agent they run in it, reads the same pack;
+a public repository whose file names a deployment of its own or a private pack lists it in
+.gitignore instead, and each clone runs skillcdn use once. Afterwards the command says so, and
+prints the sentence to put in the checkout's agreement (AGENTS.md, or CLAUDE.md where
 that is the file agents read), so that the agents working here run skillcdn status before their
 first step and read the pack.
 `,
@@ -1264,7 +1275,7 @@ async function useCommand(args: readonly string[], io: CliIo): Promise<number> {
     const written = relative(cwd, root).split("\\").join("/") || ".";
     const path = await store.save({ pack: formatAddress(local.address), directory: written });
     io.stdout(
-      `This directory reads ${formatAddress(local.address)} from ${written === "." ? "itself" : written}, on this machine: ${path}.\n\n${HAND_OVER}`,
+      `This directory reads ${formatAddress(local.address)} from ${written === "." ? "itself" : written}, on this machine: ${path}.\n${COMMIT_LINE}\n\n${HAND_OVER}`,
     );
     return 0;
   }
@@ -1286,7 +1297,7 @@ async function useCommand(args: readonly string[], io: CliIo): Promise<number> {
   }
   const path = await store.save({ pack: formatAddress(address.value), url });
   io.stdout(
-    `This directory reads ${formatAddress(address.value)}${url === undefined ? "" : ` at ${url}`}: ${path}.\n\n${HAND_OVER}`,
+    `This directory reads ${formatAddress(address.value)}${url === undefined ? "" : ` at ${url}`}: ${path}.\n${COMMIT_LINE}\n\n${HAND_OVER}`,
   );
   return 0;
 }

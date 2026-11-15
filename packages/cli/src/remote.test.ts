@@ -5,7 +5,14 @@ import type { FetchLike } from "@skillcdn/client";
 import { hubBody, parseAddress, parseRepoPath, restMountSchema } from "@skillcdn/core";
 import { INDEX_LIMIT_DEFAULTS } from "@skillcdn/indexer";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_ORIGIN, EXIT_MISSING, EXIT_UNREADABLE, EXIT_USAGE, runCli } from "./cli.js";
+import {
+  COMMIT_LINE,
+  DEFAULT_ORIGIN,
+  EXIT_MISSING,
+  EXIT_UNREADABLE,
+  EXIT_USAGE,
+  runCli,
+} from "./cli.js";
 import { createMemoryStore } from "./credentials.js";
 import { createMemoryDirectoryStore } from "./directory.js";
 import { openDirectory } from "./local.js";
@@ -297,6 +304,12 @@ describe("a pack at a deployment", () => {
     );
     expect(bound.code).toBe(0);
     expect(bound.out).toContain("This directory reads /gh/acme/skills at https://skillcdn.example");
+    // Whether the file is committed, before anything commits it: not in a public repository
+    // when it names a deployment of one's own, as this one does.
+    expect(bound.out).toContain(`\n${COMMIT_LINE}\n`);
+    expect(COMMIT_LINE).toContain(
+      "unless the repository is public and the file names a deployment of your own or a private pack",
+    );
     // And how the agents that work here learn of it: the sentence for the checkout's agreement.
     expect(bound.out).toContain("AGENTS.md, or CLAUDE.md where that is the file agents read");
     expect(bound.out).toContain(
@@ -526,6 +539,7 @@ describe("a pack at a deployment", () => {
     expect(bound.out).toMatch(
       /This directory reads \/local\/[^/]+\/acme from acme, on this machine/,
     );
+    expect(bound.out).toContain(`\n${COMMIT_LINE}\n`);
     expect(bound.out).toContain("**Bound to a pack?**");
     const read = await run(["skills"], deployment, { directory, cwd });
     expect(read.code).toBe(0);

@@ -6,7 +6,8 @@ import { originOf } from "./credentials.js";
 // What a working directory says about the pack its work reads: `.skillcdn.json` in it or in a
 // directory above it, as `.nvmrc` and its kind are found (ADR-0056). Written by `skillcdn use`
 // and meant to be committed, so that everyone who works in the checkout, and every agent they
-// run in it, reads the same pack without saying so. It names the pack's address and, where the
+// run in it, reads the same pack without saying so; a public repository whose file names a
+// deployment of its own or a private pack leaves it out, and each clone is bound by hand. It names the pack's address and, where the
 // pack is not at the default deployment, the deployment's origin; or, for a pack on this
 // machine, the directory the pack is read from, relative to the file. Never a token or anything
 // secret: a key this file does not know is dropped on reading.
