@@ -612,6 +612,7 @@ function meaningOf(io: CliIo): LocalMeaning | undefined {
   );
   const maxTextChars = wholeNumberOf(env, "EMBEDDINGS_TEXT_CHARS", 8000, 100, 100_000, problems);
   const maxTextTokens = wholeNumberOf(env, "EMBEDDINGS_TEXT_TOKENS", 4096, 64, 100_000, problems);
+  const maxQueryTokens = wholeNumberOf(env, "EMBEDDINGS_QUERY_TOKENS", 128, 16, 100_000, problems);
   const rerankerUrl = serverUrlOf(env, "RERANKER_URL", problems);
   const rerankerModel = textOf(env, "RERANKER_MODEL");
   if (textOf(env, "RERANKER_URL") === undefined) {
@@ -652,6 +653,7 @@ function meaningOf(io: CliIo): LocalMeaning | undefined {
       maxBatchChars,
       maxTextChars,
       maxTextTokens,
+      maxQueryTokens,
     }),
   );
   const reranker =

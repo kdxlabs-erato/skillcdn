@@ -53,6 +53,11 @@ export interface EmbeddingsApiOptions {
   readonly maxTextChars?: number | undefined;
   /** What a text cut to its characters is cut to again, in the tokens `estimatedTokens` counts (ADR-0105). */
   readonly maxTextTokens?: number | undefined;
+  /**
+   * What a query is cut to, in the same tokens (ADR-0109): a search waits for its query, and what
+   * a server takes to embed one grows with its length. The words of a search take the query whole.
+   */
+  readonly maxQueryTokens?: number | undefined;
   /** The most characters in one call, over its texts once each is cut; more are refused. */
   readonly maxBatchChars?: number | undefined;
   readonly breaker?: BreakerOptions | undefined;
@@ -71,6 +76,8 @@ const DEFAULT_MAX_TEXT_CHARS = 8_000;
  * them: eight thousand characters of English, five thousand of Korean or of hexadecimal.
  */
 const DEFAULT_MAX_TEXT_TOKENS = 4_096;
+/** A question of some hundred words of English or 160 characters of Korean: a second or so on one CPU. */
+const DEFAULT_MAX_QUERY_TOKENS = 128;
 /** Some ten thousand tokens: what one call costs the server is bounded whatever the sections. */
 const DEFAULT_MAX_BATCH_CHARS = 32_000;
 /** Three failures in a row, and the server is left alone for ten seconds. */
@@ -120,12 +127,16 @@ export function createEmbeddingsApi(options: EmbeddingsApiOptions): Embedder {
   const maxTexts = options.maxTexts ?? DEFAULT_MAX_TEXTS;
   const maxTextChars = options.maxTextChars ?? DEFAULT_MAX_TEXT_CHARS;
   const maxTextTokens = options.maxTextTokens ?? DEFAULT_MAX_TEXT_TOKENS;
+  const maxQueryTokens = Math.min(
+    options.maxQueryTokens ?? DEFAULT_MAX_QUERY_TOKENS,
+    maxTextTokens,
+  );
   const maxBatchChars = options.maxBatchChars ?? DEFAULT_MAX_BATCH_CHARS;
   const gate = createGate(options.concurrency ?? DEFAULT_CONCURRENCY, options.now);
   const breaker = createBreaker(options.breaker ?? DEFAULT_BREAKER, options.now);
   const { queryInstruction } = options;
   const prepare = (text: string, as: EmbeddingRole): string => {
-    const cut = cutText(text, maxTextChars, maxTextTokens);
+    const cut = cutText(text, maxTextChars, as === "query" ? maxQueryTokens : maxTextTokens);
     return as === "query" && queryInstruction !== undefined
       ? `Instruct: ${queryInstruction}\nQuery:${cut}`
       : cut;

@@ -265,6 +265,7 @@ const environmentSchema = z.object({
   EMBEDDINGS_BATCH_CHARS: integer(32_000, 1000, 1_000_000),
   EMBEDDINGS_TEXT_CHARS: integer(8000, 100, 100_000),
   EMBEDDINGS_TEXT_TOKENS: integer(4096, 64, 100_000),
+  EMBEDDINGS_QUERY_TOKENS: integer(128, 16, 100_000),
   RERANKER_URL: z.url({ protocol: /^https?$/ }).optional(),
   RERANKER_MODEL: z.string().min(1).max(200).optional(),
   RERANKER_KEY: z.string().min(1).optional(),
@@ -370,6 +371,8 @@ export interface EmbeddingsConfig {
   readonly textChars: number;
   /** What a text cut to its characters is cut to again, in estimated tokens (ADR-0105). */
   readonly textTokens: number;
+  /** What a query is cut to before it is embedded, in estimated tokens (ADR-0109). */
+  readonly queryTokens: number;
 }
 
 /** The reranking server of the search by meaning (ADR-0065). */
@@ -660,6 +663,7 @@ function meaningOf(env: z.infer<typeof environmentSchema>, problems: string[]): 
       batchChars: env.EMBEDDINGS_BATCH_CHARS,
       textChars: env.EMBEDDINGS_TEXT_CHARS,
       textTokens: env.EMBEDDINGS_TEXT_TOKENS,
+      queryTokens: env.EMBEDDINGS_QUERY_TOKENS,
     };
   }
   let reranker: RerankerConfig | undefined;

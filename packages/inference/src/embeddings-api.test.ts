@@ -151,6 +151,20 @@ describe("the embeddings API adapter", () => {
     expect(api(fetchLike).maxTextTokens).toBe(4096);
   });
 
+  it("cuts a query to fewer tokens than a document (ADR-0109)", async () => {
+    const { fetchLike, seen } = serving(() => embeddings([0]));
+    const long = "7".repeat(1000);
+    await api(fetchLike).embed([long], "query");
+    await api(fetchLike).embed([long], "document");
+    await api(fetchLike, { maxQueryTokens: 300 }).embed([long], "query");
+    const [query = "", document = "", wider = ""] = seen.map(
+      (call) => (call.body.input as string[])[0] ?? "",
+    );
+    expect(query).toBe("7".repeat(128));
+    expect(document).toBe(long);
+    expect(wider).toBe("7".repeat(300));
+  });
+
   it("refuses a call with more texts, or more text, than one call takes", async () => {
     const { fetchLike, seen } = serving(() => embeddings([0]));
     const embedder = api(fetchLike, { maxTexts: 2, maxBatchChars: 10 });
