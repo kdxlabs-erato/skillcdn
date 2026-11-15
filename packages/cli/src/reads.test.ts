@@ -9,7 +9,14 @@ import {
   restSkillSchema,
 } from "@skillcdn/core";
 import { describe, expect, it } from "vitest";
-import { EXIT_MISSING, EXIT_UNREADABLE, EXIT_USAGE, runCli } from "./cli.js";
+import {
+  EXIT_MISSING,
+  EXIT_UNREADABLE,
+  EXIT_USAGE,
+  FILE_PAGE_CHARS,
+  OUTPUT_CHARS,
+  runCli,
+} from "./cli.js";
 
 async function run(args: string[], environment: Record<string, string | undefined> = {}) {
   let out = "";
@@ -238,6 +245,101 @@ describe("the reads of a directory", () => {
     const measured = await read("--offset", "12", "--limit", "25");
     expect(measured.content).toBe(table.slice(12, 37));
     expect(measured.nextOffset).toBe(37);
+  });
+
+  it("prints a skill longer than a host shows whole in parts, each naming the next (ADR-0108)", async () => {
+    // Three included files of some twelve thousand characters: more than one read prints.
+    const files = ["alpha", "bravo", "charlie"];
+    const lines = (name: string) =>
+      Array.from(
+        { length: 400 },
+        (_, at) => `Line ${name}-${String(at).padStart(4, "0")} of the ${name} file.`,
+      );
+    const include = files.map((name) => `    - references/${name}.md\n`).join("");
+    const root = await repository({
+      ...PACK,
+      "engineering/big/SKILL.md": `---\nname: big\ndescription: A skill of many included files.\nskillcdn:\n  include:\n${include}---\n# Big\n\nRead every file.\n`,
+      ...Object.fromEntries(
+        files.map((name) => [
+          `engineering/big/references/${name}.md`,
+          `${lines(name).join("\n")}\n`,
+        ]),
+      ),
+    });
+    const continuation =
+      /The skill continues\. Read the next part before using it: skillcdn skill (\S+) engineering\/big\/SKILL\.md --cursor (\S+)\n$/;
+    const parts: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const { code, out } = await run([
+        "skill",
+        root,
+        "engineering/big/SKILL.md",
+        ...(cursor === undefined ? [] : ["--cursor", cursor]),
+      ]);
+      expect(code).toBe(0);
+      expect(out.length).toBeLessThanOrEqual(OUTPUT_CHARS + 1);
+      parts.push(out);
+      const next = continuation.exec(out);
+      // The directory as it was given, quoted for a shell where it needs it.
+      if (next !== null) expect(next[1]?.replace(/^'(.*)'$/, "$1")).toBe(root);
+      cursor = next?.[2];
+      expect(parts.length).toBeLessThan(20);
+    } while (cursor !== undefined);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const part of parts.slice(0, -1)) {
+      expect(part).toContain("Skill context is incomplete.");
+    }
+    expect(parts.at(-1)).not.toContain("Skill context is incomplete.");
+    // Each file is named at most once a part (#520), and every line of every file is printed
+    // whole, but where a part ends inside it.
+    for (const part of parts) {
+      for (const name of files) {
+        const header = `--- included file: engineering/big/references/${name}.md ---`;
+        expect(part.split(header).length - 1).toBeLessThanOrEqual(1);
+      }
+    }
+    const printed = parts.join("\n");
+    const missing = files.flatMap(lines).filter((line) => !printed.includes(line));
+    expect(missing.length).toBeLessThanOrEqual(parts.length - 1);
+    // A cursor of another commit, or of nothing, is refused as a misuse.
+    const stale = await run([
+      "skill",
+      root,
+      "engineering/big/SKILL.md",
+      "--cursor",
+      "bm90LWEtY3Vyc29y",
+    ]);
+    expect(stale.code).toBe(EXIT_USAGE);
+    // The JSON is the skill whole, as before.
+    const json = await run(["skill", root, "engineering/big/SKILL.md", "--json"]);
+    const parsed = restSkillSchema.parse(JSON.parse(json.out));
+    if (parsed.status !== "ready") throw new Error("not ready");
+    expect(parsed.skill.complete).toBe(true);
+  });
+
+  it("prints a page of a file within what a host shows whole, ended at a line (ADR-0108)", async () => {
+    const rows = Array.from(
+      { length: 900 },
+      (_, at) => `Row ${String(at).padStart(4, "0")}: a line of the long file.`,
+    );
+    const root = await repository({ ...PACK, "docs/long.md": `# Long\n\n${rows.join("\n")}\n` });
+    const first = await run(["file", root, "docs/long.md"]);
+    expect(first.code).toBe(0);
+    expect(first.out.length).toBeLessThanOrEqual(OUTPUT_CHARS);
+    const next = /More follows: call skillcdn file with offset (\d+)\./.exec(first.out);
+    const offset = Number(next?.[1]);
+    expect(offset).toBeGreaterThan(0);
+    expect(offset).toBeLessThanOrEqual(FILE_PAGE_CHARS);
+    const content = first.out.slice(first.out.indexOf("--- content ---\n") + 16);
+    expect(content.trimEnd().split("\n").at(-1)).toMatch(/^Row \d{4}: a line of the long file\.$/);
+    const rest = await run(["file", root, "docs/long.md", "--offset", String(offset)]);
+    expect(rest.out).toMatch(/--- content ---\nRow \d{4}: a line/);
+    // The JSON is the page the API answers.
+    const json = await run(["file", root, "docs/long.md", "--json"]);
+    expect((JSON.parse(json.out) as { content: string }).content.length).toBeGreaterThan(
+      FILE_PAGE_CHARS,
+    );
   });
 
   it("refuses what cannot be read or is not asked right", async () => {

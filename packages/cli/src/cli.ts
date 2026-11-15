@@ -16,6 +16,7 @@ import {
   directoryResultOf,
   FIND_DEFAULT_LIMIT,
   FIND_MAX_LIMIT,
+  type FileResult,
   type FindItem,
   type FindResult,
   fileResultOf,
@@ -136,6 +137,15 @@ export const DEFAULT_ORIGIN = "https://skillcdn.ai";
 /** Where `serve` listens when nothing says otherwise: this machine alone. */
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 11189;
+
+/**
+ * The most characters one read prints for an agent, where it chooses (ADR-0108): below what the
+ * hosts that run an agent's commands show it whole, the least of them thirty thousand. A skill
+ * longer than this is printed in parts, each saying how to read the next.
+ */
+export const OUTPUT_CHARS = 28_000;
+/** The characters of a file one read prints unless --limit says otherwise: within {@link OUTPUT_CHARS} with its header and links. */
+export const FILE_PAGE_CHARS = 24_000;
 
 /** How the results name the reads, so that an agent is told the command and not a tool. */
 export const COMMAND_WORDS: ToolWords = {
@@ -291,24 +301,27 @@ ${DEFAULT_ORIGIN}. The search covers public packs alone, so no token is sent.
   --url <origin>  The deployment searched.
   --json          Print the JSON the REST API answers instead of the words a model is given.
 `,
-  skill: `usage: skillcdn skill [<pack>] <path> [--url <origin>] [--as <address>] [--json]
+  skill: `usage: skillcdn skill [<pack>] <path> [--cursor <cursor>] [--url <origin>] [--as <address>] [--json]
 
 One skill whole, as load_skill assembles it: the rules of every SKILLCDN.md from the pack's root
 to the skill's own folder, then its instructions, then the files it includes on every run, each
 under a line that names its path; then the files it has and what it refers to. <path> is the
 path of its SKILL.md from the pack's root, as skills and browse print it, or the skill://
 URI the pack names it by, which then names the pack as well. The pages the skill is read in are
-joined: what is printed is complete unless it says otherwise.
+joined, up to ${OUTPUT_CHARS} characters: a skill longer than that is printed in parts, and the
+last line of a part is the command that prints the next, with its --cursor. Read every part
+before using the skill. --json prints the skill whole, from --cursor where it is given.
 
 ${READ_OPTIONS}
 `,
   file: `usage: skillcdn file [<pack>] <path> [--offset <n>] [--limit <n>] [--url <origin>] [--as <address>] [--json]
 
 A page of a file, as read_repo_file reads it: the text as written, from character --offset,
-${READ_FILE_DEFAULT_LIMIT} characters unless --limit says otherwise (up to ${READ_FILE_MAX_LIMIT}); a page that ends before
+${FILE_PAGE_CHARS} characters unless --limit says otherwise (up to ${READ_FILE_MAX_LIMIT}); a page that ends before
 the file does says where the next begins. A path that names a folder answers what the folder
 holds. A file over the read limit, one that is not text, and one a license keeps at its source
-are named with where to read them instead.
+are named with where to read them instead. --json prints the page the REST API answers,
+${READ_FILE_DEFAULT_LIMIT} characters unless --limit says otherwise.
 
 ${READ_OPTIONS}
 `,
@@ -907,10 +920,21 @@ async function notFound(pack: Pack, summary: MountSummary, path: string): Promis
   );
 }
 
-/** One skill whole: every page of its context, joined. */
-async function wholeSkill(pack: Pack, summary: MountSummary, path: string): Promise<SkillResult> {
+/**
+ * A skill from `cursor` on, every page of its context joined, or as many of them as print within
+ * `fits` where it is given (ADR-0108): the first page whatever its length, and then each that
+ * keeps the part within it. A part that stops before the skill does ends incomplete, with the
+ * cursor of the page it did not take.
+ */
+async function skillFrom(
+  pack: Pack,
+  summary: MountSummary,
+  path: string,
+  from: string | undefined,
+  fits?: (part: SkillResult) => boolean,
+): Promise<SkillResult> {
   const pages: SkillResult[] = [];
-  let cursor: string | undefined;
+  let cursor = from;
   for (;;) {
     const body = await pack.skill(path, cursor).catch(async (error: unknown) => {
       if (error instanceof PackError && error.code === "skill.not_found") {
@@ -929,16 +953,57 @@ async function wholeSkill(pack: Pack, summary: MountSummary, path: string): Prom
         "The pack answered a skill in an unexpected shape.",
       );
     }
+    const joined = joinSkillPages([...pages, page]);
+    if (joined === undefined) {
+      throw new Error("a skill has at least one page");
+    }
+    if (fits !== undefined && pages.length > 0 && !fits(joined)) {
+      const part = joinSkillPages(pages);
+      if (part === undefined) {
+        throw new Error("a part has at least one page");
+      }
+      return part;
+    }
     pages.push(page);
     cursor = page.nextCursor;
     if (page.complete || cursor === undefined) {
-      const whole = joinSkillPages(pages);
-      if (whole === undefined) {
-        throw new Error("a skill has at least one page");
-      }
-      return whole;
+      return joined;
     }
   }
+}
+
+/** A word of the command line, quoted for a shell where it needs it. */
+const shellWord = (word: string): string =>
+  /^[\w@%+=:,./~-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+
+/**
+ * The last line of a part of a skill that stops before the skill does: the command that prints
+ * the next part, with the pack and the path as they were given.
+ */
+function nextPartLine(words: readonly string[], cursor: string): string {
+  const command = ["skillcdn", "skill", ...words, "--cursor", cursor].map(shellWord).join(" ");
+  return `The skill continues. Read the next part before using it: ${command}`;
+}
+
+/**
+ * A page of a file the command cut where no length was asked (ADR-0108), ended at the end of its
+ * last whole line, as the reader ends a page it cuts; the next page starts after that line.
+ */
+function endAtLine(result: FileResult): FileResult {
+  if (result.nextOffset === undefined) {
+    return result;
+  }
+  const end = result.content.lastIndexOf("\n") + 1;
+  if (end === 0 || end === result.content.length) {
+    return result;
+  }
+  const content = result.content.slice(0, end);
+  return {
+    ...result,
+    content,
+    nextOffset: result.offset + end,
+    references: result.references?.filter((reference) => content.includes(reference.href)),
+  };
 }
 
 /** The path a skill is asked for by: its SKILL.md path, or the URI the pack names it by. */
@@ -1080,6 +1145,7 @@ async function readCommand(
       parseAddress(first.startsWith("/") ? first : `/${first}`).ok ||
       ((await stat(resolve(io.cwd ?? ".", first)).catch(() => undefined))?.isDirectory() ?? false));
   const given = firstIsPack ? positionals.shift() : undefined;
+  const packArgument = given;
   const { pack, skillPath } = await openPack(given, parsed.values, io);
   const json = parsed.values.json === true;
   const print = (text: string): void => {
@@ -1163,13 +1229,35 @@ async function readCommand(
         throw new Misuse("The URI names the skill already; say one or the other.");
       }
       const path = skillPath ?? skillPathOf(pack, given ?? "");
-      const whole = await wholeSkill(pack, summary, path);
+      const from = parsed.values.cursor;
       if (json) {
+        const whole = await skillFrom(pack, summary, path, from);
         const outcome = skillOutcome({ status: "ready", lookup: { kind: "found", skill: whole } });
         printJson("body" in outcome ? outcome.body : outcome.failure);
-      } else {
-        print(renderSkillResult(whole, COMMAND_WORDS));
+        return 0;
       }
+      // The part ends with the line that says how to read on, which the bound counts as well.
+      // The next part is asked for as this one was: the pack, the path or URI, and where it is read.
+      const asGiven = [
+        ...(packArgument === undefined ? [] : [packArgument]),
+        ...(given === undefined ? [] : [given]),
+        ...(parsed.values.url === undefined ? [] : ["--url", parsed.values.url]),
+        ...(parsed.values.as === undefined ? [] : ["--as", parsed.values.as]),
+      ];
+      const lineOf = (part: SkillResult): string =>
+        part.complete || part.nextCursor === undefined
+          ? ""
+          : `\n\n${nextPartLine(asGiven, part.nextCursor)}`;
+      const part = await skillFrom(
+        pack,
+        summary,
+        path,
+        from,
+        (candidate) =>
+          renderSkillResult(candidate, COMMAND_WORDS).length + lineOf(candidate).length <=
+          OUTPUT_CHARS,
+      );
+      print(`${renderSkillResult(part, COMMAND_WORDS)}${lineOf(part)}`);
       return 0;
     }
     case "rows": {
@@ -1246,7 +1334,9 @@ async function readCommand(
       if (path === undefined || more.length > 0) {
         throw new Misuse("Say which file: its path from the pack's root.");
       }
-      const limit = count(parsed.values.limit, "limit", READ_FILE_MAX_LIMIT);
+      const asked = count(parsed.values.limit, "limit", READ_FILE_MAX_LIMIT);
+      // A page for an agent stays within what its host shows whole; the JSON is the API's page.
+      const limit = asked ?? (json ? undefined : FILE_PAGE_CHARS);
       const body = await pack.file({
         path,
         offset: count(parsed.values.offset, "offset", Number.MAX_SAFE_INTEGER),
@@ -1278,7 +1368,13 @@ async function readCommand(
       }
       // The length asked for travels with the result, so that a range the command got in full
       // says where the file continues, as a tool result does; the body itself does not carry it.
-      print(renderFileResult({ ...result, requestedLength: limit }, COMMAND_WORDS));
+      // A page the command cut ends at a line and says to read on.
+      print(
+        renderFileResult(
+          asked === undefined ? endAtLine(result) : { ...result, requestedLength: asked },
+          COMMAND_WORDS,
+        ),
+      );
       return 0;
     }
   }
