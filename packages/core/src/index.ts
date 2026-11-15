@@ -543,6 +543,7 @@ export {
   sectionsOf,
 } from "./search/sections.js";
 export { ENGLISH_STOP_WORDS } from "./search/stop-words.js";
+export { cutToTokens, estimatedTokens } from "./search/tokens.js";
 export {
   MAX_SEARCHED_BODY_LENGTH,
   MAX_VECTOR_BYTES,

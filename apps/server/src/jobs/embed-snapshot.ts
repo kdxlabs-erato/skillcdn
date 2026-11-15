@@ -9,6 +9,7 @@ import {
   embeddable,
   embeddedTextsOf,
   embeddingBatches,
+  estimatedTokens,
   meaningSearchOf,
   type UsageSink,
 } from "@skillcdn/core";
@@ -31,7 +32,7 @@ import {
   vectorsOfTexts,
   writeSectionVectors,
 } from "@skillcdn/db";
-import { cutText } from "@skillcdn/inference";
+import { cutText, isInferenceTimeout } from "@skillcdn/inference";
 import { compareByteOrder } from "@skillcdn/reader";
 import { vectorKeyOf } from "../adapters/meaning.js";
 import type { Logger } from "../logger.js";
@@ -139,14 +140,75 @@ const sameKey = (a: VectorKey, b: VectorKey): boolean =>
  * whole would keep the vector of its beginning under a deployment that has since come to embed
  * more of it.
  */
-export const textHashOf = (text: string, embedder: Pick<Embedder, "maxTextChars">): string =>
-  createHash("sha256").update(cutText(text, embedder.maxTextChars)).digest("hex");
+export const textHashOf = (
+  text: string,
+  embedder: Pick<Embedder, "maxTextChars" | "maxTextTokens">,
+): string =>
+  createHash("sha256")
+    .update(cutText(text, embedder.maxTextChars, embedder.maxTextTokens))
+    .digest("hex");
 
 /** What the vectors of some texts took: how many were written, the tokens read, and how many cost no call. */
 export interface EmbeddedTexts {
   readonly sections: number;
   readonly tokens: number;
   readonly reused: number;
+  /**
+   * How many were embedded from a shorter beginning, after a call of them ran out of time, and the
+   * tokens each was cut to then (ADR-0105).
+   */
+  readonly shortened: number;
+  readonly shortenedTo?: number | undefined;
+}
+
+/**
+ * The vectors of one call's texts. A call whose time runs out is made again text by text, each
+ * cut to a quarter of the tokens one text may have (ADR-0105): the server that could not embed
+ * them together in its time still embeds their beginnings, so the body is done and is not tried
+ * again whole, and a pack behind it waits one call's time for it and no more. A text of fewer
+ * tokens than that is sent as it is; a call of one text alone that runs out of time again fails,
+ * as any failure does. `undefined` when `signal` stops it between calls.
+ */
+async function vectorsOfCall(
+  embedder: Embedder,
+  texts: readonly string[],
+  signal: AbortSignal | undefined,
+): Promise<
+  | {
+      readonly vectors: readonly (Float32Array | undefined)[];
+      readonly tokens: number;
+      readonly shortened: number;
+      readonly shortenedTo?: number | undefined;
+    }
+  | undefined
+> {
+  try {
+    const embedded = await embedder.embed(texts, "document");
+    return { vectors: embedded.vectors, tokens: embedded.tokens ?? 0, shortened: 0 };
+  } catch (error) {
+    if (!isInferenceTimeout(error)) {
+      throw error;
+    }
+  }
+  const cuts = texts.map((text) => cutText(text, embedder.maxTextChars, embedder.maxTextTokens));
+  const budget = embedder.maxTextTokens ?? Math.max(...cuts.map((text) => estimatedTokens(text)));
+  const quarter = Math.max(1, Math.floor(budget / 4));
+  const vectors: (Float32Array | undefined)[] = [];
+  let tokens = 0;
+  let shortened = 0;
+  for (const text of cuts) {
+    if (signal?.aborted) {
+      return undefined;
+    }
+    const shorter = cutText(text, embedder.maxTextChars, quarter);
+    if (shorter.length < text.length) {
+      shortened += 1;
+    }
+    const embedded = await embedder.embed([shorter], "document");
+    vectors.push(embedded.vectors[0]);
+    tokens += embedded.tokens ?? 0;
+  }
+  return { vectors, tokens, shortened, shortenedTo: quarter };
 }
 
 /** A text to embed, and the body and the place its vector is written under. */
@@ -167,7 +229,7 @@ export async function embedTexts(
   signal?: AbortSignal | undefined,
 ): Promise<EmbeddedTexts | undefined> {
   if (wanted.length === 0) {
-    return { sections: 0, tokens: 0, reused: 0 };
+    return { sections: 0, tokens: 0, reused: 0, shortened: 0 };
   }
   const texts = wanted.map((item) => item.text);
   const hashes = texts.map((text) => textHashOf(text, deps.embedder));
@@ -199,25 +261,33 @@ export async function embedTexts(
   });
   const reused = items.length;
   let tokens = 0;
+  let shortened = 0;
+  let shortenedTo: number | undefined;
   const pending = unknown.map((at) => texts[at] ?? "");
   for (const batch of embeddingBatches(pending, deps.embedder)) {
     if (signal?.aborted) {
       return undefined;
     }
-    const embedded = await deps.embedder.embed(
+    const embedded = await vectorsOfCall(
+      deps.embedder,
       batch.map((at) => pending[at] ?? ""),
-      "document",
+      signal,
     );
+    if (embedded === undefined) {
+      return undefined;
+    }
     batch.forEach((at, position) => {
       const place = unknown[at];
       if (place !== undefined) {
         write(place, embedded.vectors[position]);
       }
     });
-    tokens += embedded.tokens ?? 0;
+    tokens += embedded.tokens;
+    shortened += embedded.shortened;
+    shortenedTo ??= embedded.shortenedTo;
   }
   await writeSectionVectors(deps.database, key, items);
-  return { sections: items.length, tokens, reused };
+  return { sections: items.length, tokens, reused, shortened, shortenedTo };
 }
 
 /** Writes the vectors of everything one body is embedded as: its sections, and a skill's head before them. */
@@ -373,6 +443,12 @@ export async function embedSnapshotSlice(
         counts.sections += done.sections;
         counts.tokens += done.tokens;
         counts.reused += done.reused;
+        if (done.shortened > 0) {
+          logger.warn(
+            { path: entry.path, sections: done.shortened, tokens: done.shortenedTo },
+            "a call of the embedder ran out of time, so its sections were embedded from their beginnings",
+          );
+        }
       }
     }
     const spent = clock.now().getTime() - started >= SLICE_MS || counts.sections >= limit;

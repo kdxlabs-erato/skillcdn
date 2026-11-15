@@ -25,6 +25,13 @@ export interface Embedder {
    * is the vector of its beginning.
    */
   readonly maxTextChars: number;
+  /**
+   * The most tokens of one text that are embedded, as `estimatedTokens` counts them: a text cut to
+   * its characters is cut again to these (ADR-0105). What a server takes to embed a text grows
+   * with its tokens, and the same characters are four times as many in one script as in another.
+   * `undefined`: the characters alone bound a text.
+   */
+  readonly maxTextTokens?: number | undefined;
   /** The most characters one call takes, summed over its texts once each is cut. */
   readonly maxBatchChars: number;
   /** One vector per text, in the texts' order. */

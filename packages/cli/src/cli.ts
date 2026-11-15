@@ -598,6 +598,7 @@ function meaningOf(io: CliIo): LocalMeaning | undefined {
     problems,
   );
   const maxTextChars = wholeNumberOf(env, "EMBEDDINGS_TEXT_CHARS", 8000, 100, 100_000, problems);
+  const maxTextTokens = wholeNumberOf(env, "EMBEDDINGS_TEXT_TOKENS", 4096, 64, 100_000, problems);
   const rerankerUrl = serverUrlOf(env, "RERANKER_URL", problems);
   const rerankerModel = textOf(env, "RERANKER_MODEL");
   if (textOf(env, "RERANKER_URL") === undefined) {
@@ -637,6 +638,7 @@ function meaningOf(io: CliIo): LocalMeaning | undefined {
       maxTexts,
       maxBatchChars,
       maxTextChars,
+      maxTextTokens,
     }),
   );
   const reranker =

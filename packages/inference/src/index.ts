@@ -10,6 +10,7 @@ export {
   type Gate,
   InferenceError,
   type InferenceErrorCode,
+  isInferenceTimeout,
   isTransientInferenceError,
 } from "./inference.js";
 export { type QueryCacheOptions, withQueryCache } from "./query-cache.js";

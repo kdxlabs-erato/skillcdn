@@ -565,6 +565,7 @@ describe("the search by meaning", () => {
       batchTexts: 16,
       batchChars: 32_000,
       textChars: 8000,
+      textTokens: 4096,
     });
     expect(meaning.reranker).toEqual({
       url: "http://inference.internal:8081/v1/rerank",
@@ -591,6 +592,7 @@ describe("the search by meaning", () => {
         EMBEDDINGS_BATCH_TEXTS: "64",
         EMBEDDINGS_BATCH_CHARS: "200000",
         EMBEDDINGS_TEXT_CHARS: "16000",
+        EMBEDDINGS_TEXT_TOKENS: "6000",
         RERANKER_URL: "https://inference.example/v1/rerank",
         RERANKER_MODEL: "r",
         RERANKER_KEY: "a-reranking-key",
@@ -610,6 +612,7 @@ describe("the search by meaning", () => {
       batchTexts: 64,
       batchChars: 200_000,
       textChars: 16_000,
+      textTokens: 6000,
     });
     expect(meaning.reranker).toMatchObject({
       key: "a-reranking-key",

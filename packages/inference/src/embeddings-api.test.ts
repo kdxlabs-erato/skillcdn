@@ -137,6 +137,20 @@ describe("the embeddings API adapter", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("cuts a text dense in tokens shorter than its characters allow (ADR-0105)", async () => {
+    const { fetchLike, seen } = serving(() => embeddings([0, 1]));
+    const embedder = api(fetchLike, { maxTextChars: 8000, maxTextTokens: 100 });
+    expect(embedder.maxTextTokens).toBe(100);
+    const words = "word ".repeat(1000);
+    const digits = "7".repeat(1000);
+    await embedder.embed([words, digits], "document");
+    const [wordsSent, digitsSent] = (seen[0]?.body.input ?? []) as string[];
+    // A hundred words, a hundred digits: the same tokens, five times the characters.
+    expect(wordsSent?.length).toBeGreaterThan(450);
+    expect(digitsSent).toBe("7".repeat(100));
+    expect(api(fetchLike).maxTextTokens).toBe(4096);
+  });
+
   it("refuses a call with more texts, or more text, than one call takes", async () => {
     const { fetchLike, seen } = serving(() => embeddings([0]));
     const embedder = api(fetchLike, { maxTexts: 2, maxBatchChars: 10 });

@@ -51,6 +51,8 @@ export interface EmbeddingsApiOptions {
   readonly maxTexts?: number | undefined;
   /** What a text is cut to before it is embedded. */
   readonly maxTextChars?: number | undefined;
+  /** What a text cut to its characters is cut to again, in the tokens `estimatedTokens` counts (ADR-0105). */
+  readonly maxTextTokens?: number | undefined;
   /** The most characters in one call, over its texts once each is cut; more are refused. */
   readonly maxBatchChars?: number | undefined;
   readonly breaker?: BreakerOptions | undefined;
@@ -64,6 +66,11 @@ const DEFAULT_CONCURRENCY = 2;
 const DEFAULT_MAX_TEXTS = 16;
 /** Two to four thousand tokens of most scripts: a section, and within the window of the models. */
 const DEFAULT_MAX_TEXT_CHARS = 8_000;
+/**
+ * Within the window of the models, and what a CPU embeds of one text in minutes rather than tens of
+ * them: eight thousand characters of English, five thousand of Korean or of hexadecimal.
+ */
+const DEFAULT_MAX_TEXT_TOKENS = 4_096;
 /** Some ten thousand tokens: what one call costs the server is bounded whatever the sections. */
 const DEFAULT_MAX_BATCH_CHARS = 32_000;
 /** Three failures in a row, and the server is left alone for ten seconds. */
@@ -112,12 +119,13 @@ function toVector(numbers: readonly number[], dimensions: number): Float32Array 
 export function createEmbeddingsApi(options: EmbeddingsApiOptions): Embedder {
   const maxTexts = options.maxTexts ?? DEFAULT_MAX_TEXTS;
   const maxTextChars = options.maxTextChars ?? DEFAULT_MAX_TEXT_CHARS;
+  const maxTextTokens = options.maxTextTokens ?? DEFAULT_MAX_TEXT_TOKENS;
   const maxBatchChars = options.maxBatchChars ?? DEFAULT_MAX_BATCH_CHARS;
   const gate = createGate(options.concurrency ?? DEFAULT_CONCURRENCY, options.now);
   const breaker = createBreaker(options.breaker ?? DEFAULT_BREAKER, options.now);
   const { queryInstruction } = options;
   const prepare = (text: string, as: EmbeddingRole): string => {
-    const cut = cutText(text, maxTextChars);
+    const cut = cutText(text, maxTextChars, maxTextTokens);
     return as === "query" && queryInstruction !== undefined
       ? `Instruct: ${queryInstruction}\nQuery:${cut}`
       : cut;
@@ -131,6 +139,7 @@ export function createEmbeddingsApi(options: EmbeddingsApiOptions): Embedder {
     dimensions: options.dimensions,
     maxTexts,
     maxTextChars,
+    maxTextTokens,
     maxBatchChars,
     async embed(texts, as): Promise<Embeddings> {
       if (texts.length > maxTexts) {

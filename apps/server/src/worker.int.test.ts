@@ -6,6 +6,7 @@ import {
   type EmbedLimits,
   type Entitlements,
   embeddedTextsOf,
+  estimatedTokens,
   HEAD_SECTION,
   headTextOf,
   parseAddress,
@@ -657,6 +658,81 @@ describe("the worker", () => {
     // More of it embedded: another text.
     expect(await embedLong(fake.embedder, "\n\n")).toMatchObject({ sections: 1, reused: 0 });
     expect(await embedLong(fake.embedder, "\n\n\n")).toMatchObject({ sections: 1, reused: 1 });
+  });
+
+  it("embeds the beginnings of texts a call could not embed in its time, once (ADR-0105)", async () => {
+    // A server that runs out of time on any call holding a text of more than 300 estimated
+    // tokens: a section of hashes, dense in tokens, is one, and the call it is in times out.
+    const sent: string[][] = [];
+    const slow: Embedder = {
+      ...fake.embedder,
+      maxTextTokens: 1000,
+      async embed(texts, as) {
+        sent.push([...texts]);
+        if (texts.some((text) => estimatedTokens(text) > 300)) {
+          throw new InferenceError(
+            "inference_unreachable",
+            "the inference server did not answer within 60000 ms",
+            { timedOut: true },
+          );
+        }
+        return fake.embedder.embed(texts, as);
+      },
+    };
+    const hashes = Array.from({ length: 30 }, (_, at) =>
+      createHash("sha256").update(`line ${at}`).digest("hex"),
+    ).join("\n");
+    const text = `# Checksums\n\n${hashes}\n\n## Notes\n\nKept for the release.\n`;
+    const deps = {
+      database: testDatabase.database,
+      blobs: createBlobStore(testDatabase.database),
+      embedder: slow,
+      policy: { scope: "all" as const, entitlements: allowEverything },
+      lists: noLists,
+      usage: discardUsage,
+      clock,
+      logger,
+    };
+    const embed = async (trailing: string) => {
+      const made = await madeSnapshot({
+        visibility: "public",
+        files: [{ path: "docs/checksums.md", text: `${text}${trailing}` }],
+      });
+      return embedSnapshotSlice(deps, {
+        ...made.scope,
+        repoId: made.repo.repoId,
+        commitSha: made.commit,
+        key: KEY,
+        reason: "designated",
+      });
+    };
+    const logged = logs.length;
+    expect(await embed("")).toMatchObject({ status: "embedded", bodies: 1, sections: 2 });
+    // One call of both sections ran out of time; then each was sent alone, the hashes cut to a
+    // quarter of the tokens a text may have, the notes whole.
+    expect(sent).toHaveLength(3);
+    expect(sent[0]).toHaveLength(2);
+    const [shortened] = sent[1] ?? [];
+    expect(estimatedTokens(shortened ?? "")).toBeLessThanOrEqual(250);
+    expect(shortened?.length).toBeGreaterThan(0);
+    expect(
+      sent[0]?.some(
+        (whole) => whole.length > (shortened?.length ?? 0) && whole.startsWith(shortened ?? ""),
+      ),
+    ).toBe(true);
+    expect(sent[2]?.[0]).toContain("Kept for the release.");
+    expect(logs.slice(logged)).toContainEqual(
+      expect.objectContaining({
+        path: "docs/checksums.md",
+        sections: 1,
+        tokens: 250,
+        msg: "a call of the embedder ran out of time, so its sections were embedded from their beginnings",
+      }),
+    );
+    // The same texts in another body are found by what they would have been embedded as, and the
+    // server is not asked again.
+    expect(await embed("\n")).toMatchObject({ status: "embedded", sections: 2, reused: 2 });
+    expect(sent).toHaveLength(3);
   });
 
   it("makes the part vectors at start where nothing is embedded any more (ADR-0092)", async () => {

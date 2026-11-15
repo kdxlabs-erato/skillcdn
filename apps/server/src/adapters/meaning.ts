@@ -34,6 +34,7 @@ export function createEmbedderOf(
     maxTexts: config.batchTexts,
     maxBatchChars: config.batchChars,
     maxTextChars: config.textChars,
+    maxTextTokens: config.textTokens,
   });
 }
 

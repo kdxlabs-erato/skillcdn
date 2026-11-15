@@ -28,6 +28,7 @@ export function withQueryCache(embedder: Embedder, options: QueryCacheOptions = 
     dimensions: embedder.dimensions,
     maxTexts: embedder.maxTexts,
     maxTextChars: embedder.maxTextChars,
+    maxTextTokens: embedder.maxTextTokens,
     maxBatchChars: embedder.maxBatchChars,
     async embed(texts, as) {
       const query = as === "query" && texts.length === 1 ? texts[0] : undefined;

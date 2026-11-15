@@ -5,6 +5,7 @@ import {
   cutText,
   type FetchLike,
   InferenceError,
+  isInferenceTimeout,
   isTransientInferenceError,
   postJson,
 } from "./inference.js";
@@ -230,6 +231,21 @@ describe("postJson", () => {
     await expect(postJson({ ...call(hanging), timeoutMs: 20 }, {})).rejects.toThrow(
       "the inference server did not answer within 20 ms",
     );
+    // A call whose time ran out says so apart from one that never reached the server.
+    const late = await postJson({ ...call(hanging), timeoutMs: 20 }, {}).catch(
+      (error: unknown) => error,
+    );
+    expect(isInferenceTimeout(late)).toBe(true);
+    const away = await postJson(
+      call(async () => {
+        throw new TypeError("fetch failed");
+      }),
+      {},
+    ).catch((error: unknown) => error);
+    expect(away).toBeInstanceOf(InferenceError);
+    expect((away as InferenceError).code).toBe("inference_unreachable");
+    expect(isInferenceTimeout(away)).toBe(false);
+    expect(isInferenceTimeout(new Error("did not answer within"))).toBe(false);
     // An answer that starts in time and does not end in time is the same failure.
     const trickling: FetchLike = async (_url, init) =>
       new Response(
@@ -276,5 +292,11 @@ describe("cutText", () => {
     const smile = String.fromCodePoint(0x1f600);
     expect(cutText(`abcd${smile}fg`, 5)).toBe("abcd");
     expect(cutText(`abcd${smile}fg`, 6)).toBe(`abcd${smile}`);
+  });
+
+  it("cuts again to the estimated tokens where they are given", () => {
+    expect(cutText("1234567890", 8, 3)).toBe("123");
+    expect(cutText("one two three", 100, 2)).toBe("one two");
+    expect(cutText("one two three", 100)).toBe("one two three");
   });
 });

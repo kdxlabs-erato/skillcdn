@@ -1,4 +1,4 @@
-import { DomainError } from "@skillcdn/core";
+import { cutToTokens, DomainError } from "@skillcdn/core";
 
 // What the two inference adapters share (ADR-0064, ADR-0065): one JSON call to a server the
 // operator named, with the credential it may want, bounded in time and in what it may answer; a
@@ -28,11 +28,26 @@ export type InferenceErrorCode =
 
 export class InferenceError extends DomainError {
   override readonly code: InferenceErrorCode;
+  /**
+   * The call was sent and its time ran out before the answer did: the server may be busy, or the
+   * call may ask more of it than it does in that time (ADR-0105). Always unreachable as a code.
+   */
+  readonly timedOut: boolean;
 
-  constructor(code: InferenceErrorCode, message: string, options?: { readonly cause?: unknown }) {
+  constructor(
+    code: InferenceErrorCode,
+    message: string,
+    options?: { readonly cause?: unknown; readonly timedOut?: boolean },
+  ) {
     super(code, message, options);
     this.code = code;
+    this.timedOut = options?.timedOut ?? false;
   }
+}
+
+/** Whether a call failed because its time ran out while the server worked on it. */
+export function isInferenceTimeout(error: unknown): boolean {
+  return error instanceof InferenceError && error.timedOut;
 }
 
 /** Whether a failure is the server's moment rather than the request: the kind a retry may mend. */
@@ -45,7 +60,6 @@ export function isTransientInferenceError(error: unknown): boolean {
   );
 }
 
-/** Cuts a text to `max` characters, never through a surrogate pair. */
 /**
  * The shape of an answer that is not what was expected, for the message of the error that says
  * so: its type, how many items or characters it has, and the names of its keys, never a value.
@@ -67,13 +81,18 @@ export function describeShape(value: unknown): string {
   return `a ${typeof value}`;
 }
 
-export function cutText(text: string, max: number): string {
-  if (text.length <= max) {
-    return text;
+/**
+ * Cuts a text to `max` characters, never through a surrogate pair, and then to `maxTokens` of
+ * what `estimatedTokens` counts, where they are given (ADR-0105): what a text is to the model.
+ */
+export function cutText(text: string, max: number, maxTokens?: number): string {
+  let cut = text;
+  if (cut.length > max) {
+    cut = cut.slice(0, max);
+    const last = cut.charCodeAt(cut.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
   }
-  const cut = text.slice(0, max);
-  const last = cut.charCodeAt(cut.length - 1);
-  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+  return maxTokens === undefined ? cut : cutToTokens(cut, maxTokens);
 }
 
 export interface Gate {
@@ -252,7 +271,7 @@ function unanswered(call: InferenceCall, error: unknown): InferenceError {
     timedOut
       ? `the inference server did not answer within ${call.timeoutMs} ms`
       : "the inference server could not be reached",
-    { cause: error },
+    { cause: error, timedOut },
   );
 }
 
