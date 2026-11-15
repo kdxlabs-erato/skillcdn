@@ -4,7 +4,12 @@ import type { IncludedFile, SkillResult, SkillRules } from "./results.js";
 // included files, each of which a page may end inside. A program that reads every page gives
 // the agent the skill whole; this joins the pages back into the one result they were cut from.
 
-/** Fragments of one text in page order, joined: a later fragment of a path continues the one before it. */
+/**
+ * Fragments of several texts in page order, joined by path. A page may name every text of the
+ * context, each cut where the page is: empty where the page has not reached it yet or has passed
+ * it, so the fragments of one text need not be neighbours. A fragment with text continues the
+ * first cut text of its path; an empty one adds nothing once its path is known.
+ */
 function joinFragments<T extends { readonly path: unknown; readonly truncated: boolean }>(
   pages: readonly (readonly T[])[],
   textOf: (fragment: T) => string,
@@ -13,14 +18,12 @@ function joinFragments<T extends { readonly path: unknown; readonly truncated: b
   const joined: T[] = [];
   for (const page of pages) {
     for (const fragment of page) {
-      const last = joined[joined.length - 1];
-      if (last?.truncated && last.path === fragment.path) {
-        joined[joined.length - 1] = withText(
-          last,
-          `${textOf(last)}${textOf(fragment)}`,
-          fragment.truncated,
-        );
-      } else {
+      const text = textOf(fragment);
+      const open = joined.findIndex((known) => known.truncated && known.path === fragment.path);
+      const known = open === -1 ? undefined : joined[open];
+      if (known !== undefined && text.length > 0) {
+        joined[open] = withText(known, `${textOf(known)}${text}`, fragment.truncated);
+      } else if (text.length > 0 || !joined.some((other) => other.path === fragment.path)) {
         joined.push(fragment);
       }
     }

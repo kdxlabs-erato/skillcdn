@@ -80,6 +80,36 @@ describe("joinSkillPages", () => {
     });
   });
 
+  it("joins each included file by its path when every page lists them all", () => {
+    // What the reader pages: every page names every included file, a file the page has not
+    // reached yet empty and cut, a file read on an earlier page empty and whole.
+    const file = (name: string, content: string, truncated: boolean) => ({
+      path: path(`docs/${name}.md`),
+      content,
+      truncated,
+    });
+    const whole = joinSkillPages([
+      page({
+        included: [file("a", "Alp", true), file("b", "", true), file("c", "", true)],
+        complete: false,
+        nextCursor: "c1",
+      }),
+      page({
+        included: [file("a", "ha.", false), file("b", "Bravo, c", true), file("c", "", true)],
+        complete: false,
+        nextCursor: "c2",
+      }),
+      page({
+        included: [file("a", "", false), file("b", "ommits.", false), file("c", "Charlie.", false)],
+      }),
+    ]);
+    expect(whole?.included).toEqual([
+      file("a", "Alpha.", false),
+      file("b", "Bravo, commits.", false),
+      file("c", "Charlie.", false),
+    ]);
+  });
+
   it("keeps two rules apart when the first is complete, and answers nothing for no page", () => {
     const whole = joinSkillPages([
       page({
