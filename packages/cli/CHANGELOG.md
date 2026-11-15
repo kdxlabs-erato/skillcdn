@@ -1,5 +1,35 @@
 # @skillcdn/cli
 
+## 0.5.2
+
+### Patch Changes
+
+- [`ee03669`](https://github.com/skillcdn/skillcdn/commit/ee03669b162727e7eac7e389cb12a99a12588b7c) Thanks [@samo-lucid](https://github.com/samo-lucid)! - `skillcdn use` prints a sentence for the checkout's agreement that has an agent run `skillcdn status` before its first step, and names `AGENTS.md` first, or `CLAUDE.md` where that is the file the agents read; the connection guide of the pages says the same. A checkout that carries the earlier sentence keeps working: copy the new one into it to have its agents look at what the checkout reads before they begin.
+
+- [`70b9ee9`](https://github.com/skillcdn/skillcdn/commit/70b9ee912ddb107a46e4b9e6791bc184654eb7fe) Thanks [@samo-lucid](https://github.com/samo-lucid)! - A query is embedded from its first 128 estimated tokens: some hundred words of English, or 160 characters of Korean. A search waits for its query, and a long one could take a server on one CPU past the five seconds a query has, leaving that search to its words. The words of a search still take the whole query.
+  
+  - `@skillcdn/inference`: `createEmbeddingsApi` takes `maxQueryTokens`, 128 unless you set it, and never more than `maxTextTokens`.
+  - `@skillcdn/cli`: the commands that search a directory by meaning read `EMBEDDINGS_QUERY_TOKENS`, with the default a deployment has.
+
+- [`0feb0fa`](https://github.com/skillcdn/skillcdn/commit/0feb0fa713e28b5c42aea03f2c47dda6d7d5cfd8) Thanks [@samo-lucid](https://github.com/samo-lucid)! - `@skillcdn/cli` has a library entry point: the reads of a pack as the command prints them, for a program with commands of its own. `readPack(pack, read, options)` does one read (`skills`, `browse`, `find`, `skill`, `file`, `rows`, `code`) and answers the text, in the words you give it for the reads, or the REST API's JSON. `openDeployment` makes the pack of a deployment through `@skillcdn/client`. `PackError` and `ReadMisuse` say what the pack refused and what was not asked right, for you to print. The entry point imports nothing of the file system and nothing that indexes or serves. The `skillcdn` command prints what it printed before.
+
+- [`9c4d216`](https://github.com/skillcdn/skillcdn/commit/9c4d216b7bf643bc0517948dfe64cafb779055e9) Thanks [@samo-lucid](https://github.com/samo-lucid)! - `skillcdn skill` prints a skill of more than 28,000 characters in parts, so that the host running your agent shows each part whole. A host may save a longer output to a file and show only its start, or cut it in the middle. Each part says that the skill's context is incomplete, and ends with the command that prints the next part, with its `--cursor`. Read every part before using the skill. A skill that fits is printed whole as before, and `--json` prints it whole.
+  
+  `skillcdn file` prints 24,000 characters of a file unless `--limit` says otherwise, ended at the end of a line, and says the offset to read on from. It printed 40,000 before. `--json` prints the page the REST API answers, 40,000 characters as before.
+
+- [`f5cf4dd`](https://github.com/skillcdn/skillcdn/commit/f5cf4dde7d45f200b9a531d2313cd4e8ce324145) Thanks [@samo-lucid](https://github.com/samo-lucid)! - A text is embedded within the tokens it is estimated to be, not only within its characters. The same eight thousand characters are some 1,600 tokens of English and over 7,000 of Hindi or of a list of hashes, and a server embeds a text more slowly the more tokens it has.
+  
+  - `@skillcdn/core`: `estimatedTokens` and `cutToTokens` estimate the tokens of a text for an embedding model, at or above what one tokenizer counts for every script measured. The `Embedder` port takes `maxTextTokens`.
+  - `@skillcdn/inference`: `createEmbeddingsApi` cuts every text to `maxTextTokens` estimated tokens after its characters, 4,096 unless you set it. English and Russian sections of the default eight thousand characters are cut as before. A call whose time ran out is an `InferenceError` with `timedOut` set, and `isInferenceTimeout` tells it apart from a server that could not be reached; its code stays `inference_unreachable`. `cutText` takes the tokens as a third argument.
+  - `@skillcdn/cli`: `skillcdn serve`, `mcp` and `embed` read `EMBEDDINGS_TEXT_TOKENS`, with the default a deployment has.
+- Updated dependencies [[`ff6af5e`](https://github.com/skillcdn/skillcdn/commit/ff6af5e8e374ba45c0981d880790c75d9f0661ff), [`70b9ee9`](https://github.com/skillcdn/skillcdn/commit/70b9ee912ddb107a46e4b9e6791bc184654eb7fe), [`c7b1640`](https://github.com/skillcdn/skillcdn/commit/c7b1640441bfdcacd1ccf795466be3b382353e02), [`f5cf4dd`](https://github.com/skillcdn/skillcdn/commit/f5cf4dde7d45f200b9a531d2313cd4e8ce324145)]:
+  - @skillcdn/indexer@0.5.2
+  - @skillcdn/inference@0.5.2
+  - @skillcdn/core@0.5.2
+  - @skillcdn/client@0.5.2
+  - @skillcdn/reader@0.5.2
+  - @skillcdn/serve@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes

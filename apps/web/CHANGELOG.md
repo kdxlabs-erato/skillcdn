@@ -1,5 +1,15 @@
 # @skillcdn/web
 
+## 0.5.2
+
+### Patch Changes
+
+- [`ee03669`](https://github.com/skillcdn/skillcdn/commit/ee03669b162727e7eac7e389cb12a99a12588b7c) Thanks [@samo-lucid](https://github.com/samo-lucid)! - `skillcdn use` prints a sentence for the checkout's agreement that has an agent run `skillcdn status` before its first step, and names `AGENTS.md` first, or `CLAUDE.md` where that is the file the agents read; the connection guide of the pages says the same. A checkout that carries the earlier sentence keeps working: copy the new one into it to have its agents look at what the checkout reads before they begin.
+- Updated dependencies [[`c7b1640`](https://github.com/skillcdn/skillcdn/commit/c7b1640441bfdcacd1ccf795466be3b382353e02), [`f5cf4dd`](https://github.com/skillcdn/skillcdn/commit/f5cf4dde7d45f200b9a531d2313cd4e8ce324145)]:
+  - @skillcdn/core@0.5.2
+  - @skillcdn/brand@0.5.2
+  - @skillcdn/client@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes

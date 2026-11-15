@@ -1,5 +1,17 @@
 # @skillcdn/core
 
+## 0.5.2
+
+### Patch Changes
+
+- [`c7b1640`](https://github.com/skillcdn/skillcdn/commit/c7b1640441bfdcacd1ccf795466be3b382353e02) Thanks [@samo-lucid](https://github.com/samo-lucid)! - `joinSkillPages` joins the pages of a skill that includes several files into one text per file. Each page names every included file, one not reached yet as an empty cut fragment, and the fragments of one file were joined only when they stood next to each other. A skill with two or more included files read in several pages came out with each file's heading repeated, with nothing under it, and sentences broken across the seams. `skillcdn skill` printed it so.
+
+- [`f5cf4dd`](https://github.com/skillcdn/skillcdn/commit/f5cf4dde7d45f200b9a531d2313cd4e8ce324145) Thanks [@samo-lucid](https://github.com/samo-lucid)! - A text is embedded within the tokens it is estimated to be, not only within its characters. The same eight thousand characters are some 1,600 tokens of English and over 7,000 of Hindi or of a list of hashes, and a server embeds a text more slowly the more tokens it has.
+  
+  - `@skillcdn/core`: `estimatedTokens` and `cutToTokens` estimate the tokens of a text for an embedding model, at or above what one tokenizer counts for every script measured. The `Embedder` port takes `maxTextTokens`.
+  - `@skillcdn/inference`: `createEmbeddingsApi` cuts every text to `maxTextTokens` estimated tokens after its characters, 4,096 unless you set it. English and Russian sections of the default eight thousand characters are cut as before. A call whose time ran out is an `InferenceError` with `timedOut` set, and `isInferenceTimeout` tells it apart from a server that could not be reached; its code stays `inference_unreachable`. `cutText` takes the tokens as a third argument.
+  - `@skillcdn/cli`: `skillcdn serve`, `mcp` and `embed` read `EMBEDDINGS_TEXT_TOKENS`, with the default a deployment has.
+
 ## 0.5.1
 
 ### Patch Changes

@@ -1,5 +1,22 @@
 # @skillcdn/inference
 
+## 0.5.2
+
+### Patch Changes
+
+- [`70b9ee9`](https://github.com/skillcdn/skillcdn/commit/70b9ee912ddb107a46e4b9e6791bc184654eb7fe) Thanks [@samo-lucid](https://github.com/samo-lucid)! - A query is embedded from its first 128 estimated tokens: some hundred words of English, or 160 characters of Korean. A search waits for its query, and a long one could take a server on one CPU past the five seconds a query has, leaving that search to its words. The words of a search still take the whole query.
+  
+  - `@skillcdn/inference`: `createEmbeddingsApi` takes `maxQueryTokens`, 128 unless you set it, and never more than `maxTextTokens`.
+  - `@skillcdn/cli`: the commands that search a directory by meaning read `EMBEDDINGS_QUERY_TOKENS`, with the default a deployment has.
+
+- [`f5cf4dd`](https://github.com/skillcdn/skillcdn/commit/f5cf4dde7d45f200b9a531d2313cd4e8ce324145) Thanks [@samo-lucid](https://github.com/samo-lucid)! - A text is embedded within the tokens it is estimated to be, not only within its characters. The same eight thousand characters are some 1,600 tokens of English and over 7,000 of Hindi or of a list of hashes, and a server embeds a text more slowly the more tokens it has.
+  
+  - `@skillcdn/core`: `estimatedTokens` and `cutToTokens` estimate the tokens of a text for an embedding model, at or above what one tokenizer counts for every script measured. The `Embedder` port takes `maxTextTokens`.
+  - `@skillcdn/inference`: `createEmbeddingsApi` cuts every text to `maxTextTokens` estimated tokens after its characters, 4,096 unless you set it. English and Russian sections of the default eight thousand characters are cut as before. A call whose time ran out is an `InferenceError` with `timedOut` set, and `isInferenceTimeout` tells it apart from a server that could not be reached; its code stays `inference_unreachable`. `cutText` takes the tokens as a third argument.
+  - `@skillcdn/cli`: `skillcdn serve`, `mcp` and `embed` read `EMBEDDINGS_TEXT_TOKENS`, with the default a deployment has.
+- Updated dependencies [[`c7b1640`](https://github.com/skillcdn/skillcdn/commit/c7b1640441bfdcacd1ccf795466be3b382353e02), [`f5cf4dd`](https://github.com/skillcdn/skillcdn/commit/f5cf4dde7d45f200b9a531d2313cd4e8ce324145)]:
+  - @skillcdn/core@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes
