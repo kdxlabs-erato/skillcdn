@@ -110,3 +110,29 @@ export async function listRepositoriesToIndexAhead(
     .limit(options.limit);
   return rows.map(({ rank: place, ...repository }) => ({ ...repository, tier: tierAt(place) }));
 }
+
+/**
+ * How many of the repositories the worker looks at ahead of requests have a moving ref whose
+ * commit has no index under the reading rules in force (ADR-0085): what the rebuilding of the
+ * indexes after a release of new rules has left, and the pushes not indexed yet. The worker says
+ * in its log when this comes to nothing.
+ */
+export async function countRepositoriesToIndex(
+  database: Database,
+  options: Pick<IndexAheadOptions, "indexVersion" | "listed" | "everyPack">,
+): Promise<number> {
+  const rank = rankOfRepository(options.listed);
+  const moving = sql`${repoRefs.repoId} = ${repos.id} and ${repoRefs.ref} not like ${`${PINNED_REF_PREFIX}%`}`;
+  const current = sql`exists (select 1 from ${snapshots} where ${snapshots.repoId} = ${repoRefs.repoId} and ${snapshots.commitSha} = ${repoRefs.commitSha} and ${snapshots.status} = 'ready' and ${snapshots.indexVersion} >= ${options.indexVersion})`;
+  const [row] = await drizzleOf(database)
+    .select({ count: sql<number>`count(*)::int` })
+    .from(repos)
+    .innerJoin(accounts, eq(accounts.id, repos.accountId))
+    .where(
+      and(
+        sql`exists (select 1 from ${repoRefs} where ${moving} and not ${current})`,
+        sql`${rank} <= ${options.everyPack ? OTHER - 1 : LISTED}`,
+      ),
+    );
+  return Number(row?.count ?? 0);
+}

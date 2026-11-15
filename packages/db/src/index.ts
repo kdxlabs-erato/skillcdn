@@ -16,6 +16,7 @@ export {
 } from "./jobs.js";
 export { getSchemaStatus, migrateDatabase, type SchemaStatus } from "./migrate.js";
 export {
+  countRepositoriesToIndex,
   type IndexAheadOptions,
   listRepositoriesToIndexAhead,
   type RepositoryToIndexAhead,

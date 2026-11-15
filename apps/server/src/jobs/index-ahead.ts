@@ -7,6 +7,7 @@ import {
   ROOT_PATH,
 } from "@skillcdn/core";
 import {
+  countRepositoriesToIndex,
   type Database,
   findSnapshotOfCommit,
   type JobQueue,
@@ -137,6 +138,12 @@ export function createIndexAhead(deps: IndexAheadDependencies): IndexAhead {
     leftAlone.delete(key);
     return false;
   };
+  /**
+   * How many repositories the last pass found with a commit to index under the rules in force:
+   * the worker says when that comes to nothing, which after a release is when every pack it looks
+   * at has been read again (ADR-0085). Unknown until the first pass of the process.
+   */
+  let toIndexBefore: number | undefined;
   const hostKey = (host: string): string => `host ${host}`;
   const repoKey = (repoId: string): string => `repo ${repoId}`;
 
@@ -192,6 +199,23 @@ export function createIndexAhead(deps: IndexAheadDependencies): IndexAhead {
       if (due.length > 0 || found > 0) {
         logger.info({ due: due.length, found, queued }, "looked ahead of requests");
       }
+      const toIndex = await countRepositoriesToIndex(database, {
+        indexVersion: INDEX_VERSION,
+        listed: await lists.listedKeys(),
+        everyPack: config.scope === "packs",
+      });
+      if (toIndex === 0 && toIndexBefore !== 0) {
+        logger.info(
+          { indexVersion: INDEX_VERSION },
+          "every pack looked at ahead of requests is indexed under the reading rules in force",
+        );
+      } else if (toIndex > 0 && toIndex !== toIndexBefore) {
+        logger.info(
+          { indexVersion: INDEX_VERSION, repositories: toIndex },
+          "packs looked at ahead of requests are left to index under the reading rules in force",
+        );
+      }
+      toIndexBefore = toIndex;
       return { due: due.length, found, queued };
     },
 

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { parseAddress } from "@skillcdn/core";
 import {
   announceRepoRefs,
+  countRepositoriesToIndex,
   createJobQueue,
   ensureSnapshot,
   findRepoByAlias,
@@ -263,6 +264,14 @@ describe("the worker indexing ahead of requests", () => {
     const mine = async () =>
       (await s.looked()).filter(({ job }) => job.address === "/gh/acme/licensed");
     expect(await mine()).toHaveLength(0);
+    // What the worker says is left to read again under the rules in force: one more, then as before.
+    const left = () =>
+      countRepositoriesToIndex(testDatabase.database, {
+        indexVersion: INDEX_VERSION,
+        listed: [],
+        everyPack: true,
+      });
+    const before = await left();
     // What a newer version of the rules does to a ready index when it is next asked for.
     const sent = await ensureSnapshot(
       testDatabase.database,
@@ -272,12 +281,14 @@ describe("the worker indexing ahead of requests", () => {
       new Date(),
     );
     expect(sent.status).toBe("pending");
+    expect(await left()).toBe(before + 1);
     const [job] = await mine();
     if (job === undefined) throw new Error("no look was queued");
     expect(await s.ahead.run(job.job)).toMatchObject({ indexed: 1, failed: 0 });
     expect(await findSnapshotOfCommit(testDatabase.database, repo, repo.commit)).toMatchObject({
       status: "ready",
     });
+    expect(await left()).toBe(before);
   });
 
   it("leaves a repository that is no pack, and a pinned commit, to requests", async () => {
