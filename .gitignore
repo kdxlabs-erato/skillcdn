@@ -60,3 +60,7 @@ Thumbs.db
 .claude/settings.local.json
 .claude/worktrees/
 CLAUDE.local.md
+
+# The console binding (`console use`) names the organization's console, so a public repository
+# never commits it: each maintainer binds their own clone (AGENTS.md, Workflow)
+.skillcdn-console.json
