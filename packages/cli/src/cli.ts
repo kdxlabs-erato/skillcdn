@@ -8,47 +8,22 @@ import {
   type Address,
   BROWSE_DEFAULT_LIMIT,
   BROWSE_MAX_LIMIT,
-  browseResultOf,
   type Clock,
-  catalogStateOf,
-  DATA_CODE_MAX_LIMIT,
-  DATA_ROWS_MAX_LIMIT,
-  directoryResultOf,
   FIND_DEFAULT_LIMIT,
   FIND_MAX_LIMIT,
-  type FileResult,
-  type FindItem,
-  type FindResult,
-  fileResultOf,
-  findResultOf,
   formatAddress,
   HUB_DEFAULT_LIMIT,
   HUB_MAX_LIMIT,
   hubResultOf,
   type IndexLimits,
   isGitHostAddress,
-  joinSkillPages,
-  type MountSummary,
-  mountSummaryOf,
   parseAddress,
   parseSkillUri,
   READ_FILE_DEFAULT_LIMIT,
   READ_FILE_MAX_LIMIT,
   type RestConnectClaimed,
   type RestConnectStarted,
-  renderBrowseResult,
-  renderDiagnostics,
-  renderDirectoryResult,
-  renderFileResult,
-  renderFindResult,
   renderHubResult,
-  renderInstructions,
-  renderSkillResult,
-  rowsCsv,
-  type SkillResult,
-  skillOutcome,
-  skillResultOf,
-  type ToolWords,
 } from "@skillcdn/core";
 import { checkDirectory, openWorkingTreeFile, readIndexLimits } from "@skillcdn/indexer";
 import {
@@ -80,7 +55,17 @@ import {
   openDirectory,
   watchDirectory,
 } from "./local.js";
-import { type CodePage, type Pack, PackError, type RowsPage } from "./pack.js";
+import { type Pack, PackError } from "./pack.js";
+import {
+  COMMAND_WORDS,
+  FILE_PAGE_CHARS,
+  OUTPUT_CHARS,
+  type PackRead,
+  ReadMisuse,
+  readNumber,
+  readPack,
+  wroteLine,
+} from "./read.js";
 import { asPackError, openDeployment } from "./remote.js";
 import { createMemoryVectorCache, type VectorCache } from "./vectors.js";
 
@@ -138,22 +123,7 @@ export const DEFAULT_ORIGIN = "https://skillcdn.ai";
 export const DEFAULT_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 11189;
 
-/**
- * The most characters one read prints for an agent, where it chooses (ADR-0108): below what the
- * hosts that run an agent's commands show it whole, the least of them thirty thousand. A skill
- * longer than this is printed in parts, each saying how to read the next.
- */
-export const OUTPUT_CHARS = 28_000;
-/** The characters of a file one read prints unless --limit says otherwise: within {@link OUTPUT_CHARS} with its header and links. */
-export const FILE_PAGE_CHARS = 24_000;
-
-/** How the results name the reads, so that an agent is told the command and not a tool. */
-export const COMMAND_WORDS: ToolWords = {
-  browse: "skillcdn browse",
-  search: "skillcdn find",
-  load: "skillcdn skill",
-  read: "skillcdn file",
-};
+export { COMMAND_WORDS, FILE_PAGE_CHARS, OUTPUT_CHARS } from "./read.js";
 
 const COMMANDS = [
   "check",
@@ -465,8 +435,8 @@ function version(): string {
   return typeof value === "string" ? value : "unknown";
 }
 
-/** A usage error: what was wrong, and the command's help after it. */
-class Misuse extends Error {}
+/** A usage error: what was wrong, and the command's help after it, as for a read not asked right. */
+class Misuse extends ReadMisuse {}
 
 const OPTIONS = {
   help: { type: "boolean", short: "h" },
@@ -489,18 +459,8 @@ const OPTIONS = {
 
 type Values = ReturnType<typeof parseArgs<{ options: typeof OPTIONS }>>["values"];
 
-function count(value: string | undefined, name: string, max: number): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  const number = /^\d{1,9}$/.test(value) ? Number(value) : Number.NaN;
-  if (Number.isNaN(number) || number < (name === "offset" ? 0 : 1) || number > max) {
-    throw new Misuse(
-      `--${name} takes an integer ${name === "offset" ? "from 0" : `between 1 and ${max}`}`,
-    );
-  }
-  return number;
-}
+const count = (value: string | undefined, name: string, max: number): number | undefined =>
+  readNumber(value, name, max);
 
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolved) => setTimeout(resolved, ms));
@@ -879,135 +839,6 @@ class Unreadable extends Error {
   }
 }
 
-/** Every skill and document the pack lists, page after page, as one listing. */
-async function listing(pack: Pack, summary: MountSummary): Promise<FindResult> {
-  const items: FindItem[] = [];
-  let first: FindResult | undefined;
-  let cursor: string | undefined;
-  for (;;) {
-    const body = await pack.find({ cursor, limit: FIND_MAX_LIMIT });
-    if (body.status !== "ready") {
-      throw new PackError(503, `index.${body.status}`, "The pack is not ready to read.");
-    }
-    const result = findResultOf(body, summary);
-    first ??= result;
-    items.push(...result.items);
-    cursor = result.nextCursor;
-    if (cursor === undefined) {
-      return { ...first, items, nextCursor: undefined };
-    }
-  }
-}
-
-/**
- * What the tool says when a skill is not at a path: the exact paths that are, and the
- * manifests that could not be read, since the skill asked for may be among them.
- */
-async function notFound(pack: Pack, summary: MountSummary, path: string): Promise<PackError> {
-  let available: string[] = [];
-  let diagnostics = "";
-  try {
-    const listed = await listing(pack, summary);
-    available = listed.items.flatMap((item) =>
-      item.kind === "skill" && item.path !== undefined ? [item.path] : [],
-    );
-    diagnostics = renderDiagnostics(listed.diagnostics, true, undefined, COMMAND_WORDS) ?? "";
-  } catch {
-    // The list is a courtesy: the refusal stands without it.
-  }
-  return new PackError(
-    404,
-    "skill.not_found",
-    `No skill at ${JSON.stringify(path)}. Use ${COMMAND_WORDS.browse} or ${COMMAND_WORDS.search} for its exact SKILL.md path.${available.length === 0 ? "" : ` Available: ${available.slice(0, 20).join(", ")}.`}${diagnostics.length === 0 ? "" : `\n${diagnostics}`}`,
-  );
-}
-
-/**
- * A skill from `cursor` on, every page of its context joined, or as many of them as print within
- * `fits` where it is given (ADR-0108): the first page whatever its length, and then each that
- * keeps the part within it. A part that stops before the skill does ends incomplete, with the
- * cursor of the page it did not take.
- */
-async function skillFrom(
-  pack: Pack,
-  summary: MountSummary,
-  path: string,
-  from: string | undefined,
-  fits?: (part: SkillResult) => boolean,
-): Promise<SkillResult> {
-  const pages: SkillResult[] = [];
-  let cursor = from;
-  for (;;) {
-    const body = await pack.skill(path, cursor).catch(async (error: unknown) => {
-      if (error instanceof PackError && error.code === "skill.not_found") {
-        throw await notFound(pack, summary, path);
-      }
-      throw error;
-    });
-    if (body.status !== "ready") {
-      throw new PackError(503, `index.${body.status}`, "The pack is not ready to read.");
-    }
-    const page = skillResultOf(body, summary);
-    if (page === undefined) {
-      throw new PackError(
-        0,
-        "invalid_response",
-        "The pack answered a skill in an unexpected shape.",
-      );
-    }
-    const joined = joinSkillPages([...pages, page]);
-    if (joined === undefined) {
-      throw new Error("a skill has at least one page");
-    }
-    if (fits !== undefined && pages.length > 0 && !fits(joined)) {
-      const part = joinSkillPages(pages);
-      if (part === undefined) {
-        throw new Error("a part has at least one page");
-      }
-      return part;
-    }
-    pages.push(page);
-    cursor = page.nextCursor;
-    if (page.complete || cursor === undefined) {
-      return joined;
-    }
-  }
-}
-
-/** A word of the command line, quoted for a shell where it needs it. */
-const shellWord = (word: string): string =>
-  /^[\w@%+=:,./~-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
-
-/**
- * The last line of a part of a skill that stops before the skill does: the command that prints
- * the next part, with the pack and the path as they were given.
- */
-function nextPartLine(words: readonly string[], cursor: string): string {
-  const command = ["skillcdn", "skill", ...words, "--cursor", cursor].map(shellWord).join(" ");
-  return `The skill continues. Read the next part before using it: ${command}`;
-}
-
-/**
- * A page of a file the command cut where no length was asked (ADR-0108), ended at the end of its
- * last whole line, as the reader ends a page it cuts; the next page starts after that line.
- */
-function endAtLine(result: FileResult): FileResult {
-  if (result.nextOffset === undefined) {
-    return result;
-  }
-  const end = result.content.lastIndexOf("\n") + 1;
-  if (end === 0 || end === result.content.length) {
-    return result;
-  }
-  const content = result.content.slice(0, end);
-  return {
-    ...result,
-    content,
-    nextOffset: result.offset + end,
-    references: result.references?.filter((reference) => content.includes(reference.href)),
-  };
-}
-
 /** The path a skill is asked for by: its SKILL.md path, or the URI the pack names it by. */
 function skillPathOf(pack: Pack, given: string): string {
   const uri = parseSkillUri(given);
@@ -1036,64 +867,6 @@ function skillPathOf(pack: Pack, given: string): string {
 
 type ReadCommand = "skills" | "browse" | "find" | "skill" | "file" | "rows" | "code";
 
-/** How many pages of a data read are joined before the command stops: far above what a pack holds. */
-const MAX_DATA_PAGES = 10_000;
-
-/** Every page of the tables under a path, joined. */
-async function allRows(
-  pack: Pack,
-  query: { readonly path?: string | undefined; readonly heading?: string | undefined },
-): Promise<RowsPage> {
-  let joined: RowsPage | undefined;
-  let cursor: string | undefined;
-  for (let pages = 0; pages < MAX_DATA_PAGES; pages += 1) {
-    const page = await pack.rows({ ...query, cursor, limit: DATA_ROWS_MAX_LIMIT });
-    joined =
-      joined === undefined
-        ? page
-        : {
-            ...joined,
-            tables: [...joined.tables, ...page.tables],
-            rowCount: joined.rowCount + page.rowCount,
-            nextCursor: page.nextCursor,
-          };
-    if (page.nextCursor === null) {
-      return joined;
-    }
-    cursor = page.nextCursor;
-  }
-  throw new PackError(
-    0,
-    "invalid_response",
-    "The pack answers more pages of tables than one read takes.",
-  );
-}
-
-/** Every page of the code blocks under a path, joined. */
-async function allCode(
-  pack: Pack,
-  query: { readonly path?: string | undefined; readonly heading?: string | undefined },
-): Promise<CodePage> {
-  let joined: CodePage | undefined;
-  let cursor: string | undefined;
-  for (let pages = 0; pages < MAX_DATA_PAGES; pages += 1) {
-    const page = await pack.code({ ...query, cursor, limit: DATA_CODE_MAX_LIMIT });
-    joined =
-      joined === undefined
-        ? page
-        : { ...joined, blocks: [...joined.blocks, ...page.blocks], nextCursor: page.nextCursor };
-    if (page.nextCursor === null) {
-      return joined;
-    }
-    cursor = page.nextCursor;
-  }
-  throw new PackError(
-    0,
-    "invalid_response",
-    "The pack answers more pages of code than one read takes.",
-  );
-}
-
 /** Prints what a data read made, or writes it to the file `--out` names and says how much. */
 async function deliver(
   io: CliIo,
@@ -1112,11 +885,15 @@ async function deliver(
       EXIT_FAILURE,
     );
   });
-  io.stdout(`Wrote ${written} to ${file}.\n`);
+  io.stdout(`${wroteLine(written, file)}\n`);
 }
 
 const counted = (count: number, one: string, many = `${one}s`): string =>
   `${count} ${count === 1 ? one : many}`;
+
+/** A word of the command line, quoted for a shell where it needs it. */
+const shellWord = (word: string): string =>
+  /^[\w@%+=:,./~-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 
 async function readCommand(
   command: ReadCommand,
@@ -1147,239 +924,95 @@ async function readCommand(
       parseAddress(first.startsWith("/") ? first : `/${first}`).ok ||
       ((await stat(resolve(io.cwd ?? ".", first)).catch(() => undefined))?.isDirectory() ?? false));
   const given = firstIsPack ? positionals.shift() : undefined;
-  const packArgument = given;
   const { pack, skillPath } = await openPack(given, parsed.values, io);
   const json = parsed.values.json === true;
-  const print = (text: string): void => {
-    io.stdout(`${text}\n`);
-  };
-  const printJson = (value: unknown): void => {
-    io.stdout(`${JSON.stringify(value, null, 2)}\n`);
-  };
-  const mount = await pack.mount();
-  const summary = mountSummaryOf(mount);
-
-  switch (command) {
-    case "skills": {
-      if (positionals.length > 0) {
-        throw new Misuse("skills takes the pack and nothing else.");
-      }
-      if (json) {
-        printJson(mount);
-        return 0;
-      }
-      print(
-        `${renderInstructions(catalogStateOf(mount), COMMAND_WORDS)}\n\n${renderFindResult(await listing(pack, summary), COMMAND_WORDS)}`,
-      );
-      return 0;
-    }
-    case "browse": {
-      const [folder, ...more] = positionals;
-      if (more.length > 0) {
-        throw new Misuse("browse takes the pack and at most one folder.");
-      }
-      const body = await pack.browse({
-        path: folder,
-        cursor: parsed.values.cursor,
-        limit: count(parsed.values.limit, "limit", BROWSE_MAX_LIMIT),
-      });
-      if (body.status !== "ready") {
-        throw new PackError(503, `index.${body.status}`, "The pack is not ready to read.");
-      }
-      if (json) {
-        printJson(body);
-        return 0;
-      }
-      const result = browseResultOf(body, summary);
-      if (result === undefined) {
-        throw new PackError(
-          0,
-          "invalid_response",
-          "The pack answered a folder in an unexpected shape.",
-        );
-      }
-      print(renderBrowseResult(result, COMMAND_WORDS));
-      return 0;
-    }
-    case "find": {
-      const query = positionals.join(" ").trim();
-      if (query.length === 0) {
-        throw new Misuse("Say the words to find.");
-      }
-      const body = await pack.find({
-        query,
-        path: parsed.values.path,
-        cursor: parsed.values.cursor,
-        limit: count(parsed.values.limit, "limit", FIND_MAX_LIMIT),
-      });
-      if (body.status !== "ready") {
-        throw new PackError(503, `index.${body.status}`, "The pack is not ready to read.");
-      }
-      if (json) {
-        printJson(body);
-        return 0;
-      }
-      print(renderFindResult(findResultOf(body, summary), COMMAND_WORDS));
-      return 0;
-    }
-    case "skill": {
-      const [given, ...more] = positionals;
-      if (more.length > 0 || (given === undefined && skillPath === undefined)) {
-        throw new Misuse("Say which skill: the path of its SKILL.md from the pack's root.");
-      }
-      if (given !== undefined && skillPath !== undefined) {
-        throw new Misuse("The URI names the skill already; say one or the other.");
-      }
-      const path = skillPath ?? skillPathOf(pack, given ?? "");
-      const from = parsed.values.cursor;
-      if (json) {
-        const whole = await skillFrom(pack, summary, path, from);
-        const outcome = skillOutcome({ status: "ready", lookup: { kind: "found", skill: whole } });
-        printJson("body" in outcome ? outcome.body : outcome.failure);
-        return 0;
-      }
-      // The part ends with the line that says how to read on, which the bound counts as well.
-      // The next part is asked for as this one was: the pack, the path or URI, and where it is read.
-      const asGiven = [
-        ...(packArgument === undefined ? [] : [packArgument]),
-        ...(given === undefined ? [] : [given]),
-        ...(parsed.values.url === undefined ? [] : ["--url", parsed.values.url]),
-        ...(parsed.values.as === undefined ? [] : ["--as", parsed.values.as]),
-      ];
-      const lineOf = (part: SkillResult): string =>
-        part.complete || part.nextCursor === undefined
-          ? ""
-          : `\n\n${nextPartLine(asGiven, part.nextCursor)}`;
-      const part = await skillFrom(
-        pack,
-        summary,
-        path,
-        from,
-        (candidate) =>
-          renderSkillResult(candidate, COMMAND_WORDS).length + lineOf(candidate).length <=
-          OUTPUT_CHARS,
-      );
-      print(`${renderSkillResult(part, COMMAND_WORDS)}${lineOf(part)}`);
-      return 0;
-    }
-    case "rows": {
-      const [path, ...more] = positionals;
-      if (more.length > 0) {
-        throw new Misuse("rows takes the pack and at most one path.");
-      }
-      const format = parsed.values.format ?? "csv";
-      if (format !== "csv" && format !== "json") {
-        throw new Misuse("--format takes csv or json.");
-      }
-      const body = await allRows(pack, { path, heading: parsed.values.heading });
-      const tables = counted(body.tables.length, "table");
-      const written = `${counted(body.rowCount, "row")} of ${tables}`;
-      if (json) {
-        await deliver(io, parsed.values.out, JSON.stringify(body, null, 2), written);
-        return 0;
-      }
-      if (format === "json") {
-        const rows = body.tables.flatMap((table) =>
-          table.rows.map((row) => ({
-            path: table.path,
-            heading: table.heading.join(" > "),
-            // In the order of the columns; a name a table has twice keeps its first cell.
-            cells: table.columns.reduce<Record<string, string>>((cells, column, at) => {
-              if (!Object.hasOwn(cells, column)) {
-                cells[column] = row[at] ?? "";
-              }
-              return cells;
-            }, {}),
-          })),
-        );
-        await deliver(io, parsed.values.out, JSON.stringify(rows, null, 2), written);
-        return 0;
-      }
-      await deliver(io, parsed.values.out, rowsCsv(body.tables), written);
-      return 0;
-    }
-    case "code": {
-      const [path, ...more] = positionals;
-      if (more.length > 0) {
-        throw new Misuse("code takes the pack and at most one path.");
-      }
-      let pattern: RegExp | undefined;
-      if (parsed.values.grep !== undefined) {
-        try {
-          pattern = new RegExp(parsed.values.grep, "u");
-        } catch (error) {
-          throw new Misuse(
-            `--grep takes a regular expression: ${error instanceof Error ? error.message : String(error)}`,
-          );
+  const { values } = parsed;
+  /** The read the arguments ask for, checked for what the command takes of them. */
+  const asked = ((): { read: PackRead; nextPart?: (cursor: string) => string } => {
+    const [argument, ...more] = positionals;
+    switch (command) {
+      case "skills":
+        if (positionals.length > 0) {
+          throw new Misuse("skills takes the pack and nothing else.");
         }
-      }
-      const all = await allCode(pack, { path, heading: parsed.values.heading });
-      const kept =
-        pattern === undefined ? all.blocks : all.blocks.filter((block) => pattern.test(block.text));
-      const body = { ...all, blocks: kept };
-      const written = counted(kept.length, "code block");
-      if (json) {
-        await deliver(io, parsed.values.out, JSON.stringify(body, null, 2), written);
-        return 0;
-      }
-      const text = kept
-        .map(
-          (block) =>
-            `--- ${block.path}${block.heading.length === 0 ? "" : ` > ${block.heading.join(" > ")}`}${block.language.length === 0 ? "" : ` (${block.language})`} ---\n${block.text}\n`,
-        )
-        .join("\n");
-      await deliver(io, parsed.values.out, text, written);
-      return 0;
-    }
-    case "file": {
-      const [path, ...more] = positionals;
-      if (path === undefined || more.length > 0) {
-        throw new Misuse("Say which file: its path from the pack's root.");
-      }
-      const asked = count(parsed.values.limit, "limit", READ_FILE_MAX_LIMIT);
-      // A page for an agent stays within what its host shows whole; the JSON is the API's page.
-      const limit = asked ?? (json ? undefined : FILE_PAGE_CHARS);
-      const body = await pack.file({
-        path,
-        offset: count(parsed.values.offset, "offset", Number.MAX_SAFE_INTEGER),
-        limit,
-      });
-      if (json) {
-        printJson(body);
-        return 0;
-      }
-      if (body.kind === "directory") {
-        const result = directoryResultOf(body, summary);
-        if (result === undefined) {
-          throw new PackError(
-            0,
-            "invalid_response",
-            "The pack answered a folder in an unexpected shape.",
-          );
+        return { read: { read: "skills" } };
+      case "browse":
+        if (more.length > 0) {
+          throw new Misuse("browse takes the pack and at most one folder.");
         }
-        print(renderDirectoryResult(result));
-        return 0;
+        return {
+          read: { read: "browse", path: argument, cursor: values.cursor, limit: values.limit },
+        };
+      case "find":
+        return {
+          read: {
+            read: "find",
+            words: positionals.join(" "),
+            path: values.path,
+            cursor: values.cursor,
+            limit: values.limit,
+          },
+        };
+      case "skill": {
+        if (more.length > 0 || (argument === undefined && skillPath === undefined)) {
+          throw new Misuse("Say which skill: the path of its SKILL.md from the pack's root.");
+        }
+        if (argument !== undefined && skillPath !== undefined) {
+          throw new Misuse("The URI names the skill already; say one or the other.");
+        }
+        // The next part is asked for as this one was: the pack, the path or URI, and where it
+        // is read (ADR-0108).
+        const asGiven = [
+          ...(given === undefined ? [] : [given]),
+          ...(argument === undefined ? [] : [argument]),
+          ...(values.url === undefined ? [] : ["--url", values.url]),
+          ...(values.as === undefined ? [] : ["--as", values.as]),
+        ];
+        return {
+          read: {
+            read: "skill",
+            path: skillPath ?? skillPathOf(pack, argument ?? ""),
+            cursor: values.cursor,
+          },
+          nextPart: (cursor) =>
+            ["skillcdn", "skill", ...asGiven, "--cursor", cursor].map(shellWord).join(" "),
+        };
       }
-      const result = fileResultOf(body, summary);
-      if (result === undefined) {
-        throw new PackError(
-          0,
-          "invalid_response",
-          "The pack answered a file in an unexpected shape.",
-        );
-      }
-      // The length asked for travels with the result, so that a range the command got in full
-      // says where the file continues, as a tool result does; the body itself does not carry it.
-      // A page the command cut ends at a line and says to read on.
-      print(
-        renderFileResult(
-          asked === undefined ? endAtLine(result) : { ...result, requestedLength: asked },
-          COMMAND_WORDS,
-        ),
-      );
-      return 0;
+      case "file":
+        if (argument === undefined || more.length > 0) {
+          throw new Misuse("Say which file: its path from the pack's root.");
+        }
+        return {
+          read: { read: "file", path: argument, offset: values.offset, limit: values.limit },
+        };
+      case "rows":
+        if (more.length > 0) {
+          throw new Misuse("rows takes the pack and at most one path.");
+        }
+        return {
+          read: { read: "rows", path: argument, heading: values.heading, format: values.format },
+        };
+      case "code":
+        if (more.length > 0) {
+          throw new Misuse("code takes the pack and at most one path.");
+        }
+        return {
+          read: { read: "code", path: argument, heading: values.heading, grep: values.grep },
+        };
     }
+  })();
+  const output = await readPack(pack, asked.read, {
+    words: COMMAND_WORDS,
+    json,
+    nextPart: asked.nextPart,
+  });
+  if (output.holds !== undefined) {
+    // What a data read made goes to the output, or to the file `--out` names.
+    await deliver(io, values.out, output.text, output.holds);
+  } else {
+    io.stdout(`${output.text}\n`);
   }
+  return 0;
 }
 
 /** How many claims a login makes before it gives up, whatever the clock says: a code's lifetime and some. */
@@ -1799,7 +1432,7 @@ export async function runCli(args: readonly string[], io: CliIo): Promise<number
         return await readCommand(name, rest, io);
     }
   } catch (error) {
-    if (error instanceof Misuse) {
+    if (error instanceof ReadMisuse) {
       io.stderr(`${error.message}\n\n${HELP[name]}`);
       return EXIT_USAGE;
     }

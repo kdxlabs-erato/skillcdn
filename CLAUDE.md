@@ -47,7 +47,7 @@ packages/
   reader/     the reads of a mount over an index, wherever the index is kept    @skillcdn/reader on npm
   client/     the REST API as typed functions, for Node.js and the browser      @skillcdn/client on npm
   serve/      the MCP surface and the REST address routes as a library over a reader   @skillcdn/serve on npm
-  cli/        the skillcdn command: check a pack, read one as an agent gets it over MCP, serve a directory   @skillcdn/cli on npm
+  cli/        the skillcdn command: check a pack, read one as an agent gets it over MCP, serve a directory; its reads as a library   @skillcdn/cli on npm
   brand/      the pictures of the brand as files, under the trademark policy; no code   @skillcdn/brand on npm
 apps/server/fixtures/.repositories/  test-only repository fixtures; the public reference pack is skillcdn/skills
 deploy/       Dockerfile, compose files, the contract for whoever operates the image

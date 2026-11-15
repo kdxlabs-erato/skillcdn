@@ -21,6 +21,13 @@
   "engines": {
     "node": ">=24"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
   "bin": {
     "skillcdn": "./dist/bin.js"
   },

@@ -86,3 +86,36 @@ A directory is searched by words alone unless `EMBEDDINGS_URL` and `EMBEDDINGS_M
 `.git`, `node_modules` and symbolic links are left out of a directory. A working directory is read rather than a commit, so untracked or ignored files can make what is printed differ from what is pushed. The limits a deployment applies can be set through the environment (`INDEX_MAX_FILES`, `INDEX_MAX_FILE_BYTES`, `READ_MAX_FILE_BYTES`, and the others listed in [the deployment contract](https://github.com/skillcdn/skillcdn/blob/main/deploy/README.md#environment-contract)). The rules themselves are [`@skillcdn/indexer`](https://www.npmjs.com/package/@skillcdn/indexer).
 
 Node.js 24 or newer.
+
+## The reads as a library
+
+A program with commands of its own that reads packs at a deployment prints them as `skillcdn` does, in its own words, with the reads this package exports ([ADR-0110](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0110-the-reads-of-the-command-are-a-library-for-other-commands.md)). The entry point imports nothing of the file system and nothing that indexes or serves: the pack is read through [`@skillcdn/client`](https://www.npmjs.com/package/@skillcdn/client).
+
+```ts
+import { openDeployment, readPack, PackError, ReadMisuse, wroteLine } from "@skillcdn/cli";
+import { parseAddress } from "@skillcdn/core";
+
+const address = parseAddress("/gh/acme/skills");
+if (!address.ok) throw new Error("not an address");
+const pack = openDeployment({
+  url: "https://skillcdn.ai",
+  address: address.value,
+  token: undefined,
+  fetch,
+  userAgent: "my-command",
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+});
+const words = { browse: "my skills", search: "my skills --search", load: "my skill", read: "my skill --file" };
+const part = await readPack(pack, { read: "skill", path: "marketing/ads/SKILL.md" }, {
+  words,
+  nextPart: (cursor) => `my skill marketing/ads/SKILL.md --cursor ${cursor}`,
+});
+console.log(part.text);
+```
+
+| Export | What it is |
+|---|---|
+| `readPack(pack, read, options)` | One read, as the command prints it: `skills`, `browse`, `find`, `skill` (in parts within `OUTPUT_CHARS`, the last line from `nextPart`), `file` (`FILE_PAGE_CHARS` ended at a line unless a limit is given), `rows` and `code`. It answers `{ text }`, and for the data reads `holds` as well, what the text holds, for `wroteLine` when you write it to a file. `json` gives the REST API's JSON instead. `words` names the reads in the text, `COMMAND_WORDS` by default. |
+| `openDeployment(options)` | A `Pack` at a deployment: its REST API through the client, with a token as the bearer, waiting up to `waitMs` while a commit is first indexed. |
+| `PackError`, `ReadMisuse` | What the pack does not have or refuses, with the API's status and code (`skill.not_found` lists the skills there are, in your words); and what was not asked right, a number out of its range or a pattern that does not parse, worded for a flag (`--limit takes an integer between 1 and 200`). Printing them, and the exit code, are yours. |
+| `readNumber(value, name, max)` | A flag's number as the command checks it, with the same words. |
