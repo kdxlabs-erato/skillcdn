@@ -34,13 +34,13 @@ An address names a repository and may add a ref, a folder or both, as `/gh/<owne
 
 An agent that runs commands can use a pack without an MCP connection: the `skillcdn` command reads the skills for it, in the same words an MCP client's model is given. It is set up once per project, for every agent that works there, and the quickest way is to tell your agent, in its own chat:
 
-> Run `npm install -g @skillcdn/cli` and `skillcdn use gh/acme/skills` in this project, and add the sentence it prints to `CLAUDE.md` or `AGENTS.md`.
+> Run `npm install -g @skillcdn/cli` and `skillcdn use gh/acme/skills` in this project, and add the sentence it prints to `AGENTS.md`, or to `CLAUDE.md` if that is the file you read.
 
 An agent that can run commands does the rest. By hand, it is the same three steps:
 
 1. **Install the command** where the agent runs: `npm install -g @skillcdn/cli` (Node.js 24 or newer), or `npx @skillcdn/cli <command>` for a run without installing.
 2. **Connect the project to the pack**: `skillcdn use gh/acme/skills` for a pack at a deployment, or `skillcdn use ../packs/acme` for a folder on the machine, read with no server and no network. It writes `.skillcdn.json`, which names the pack and nothing secret and is meant to be committed.
-3. **Tell the agents.** Nothing tells an agent to look until the project says so: put the sentence the command prints into the project's agreement (`CLAUDE.md` or `AGENTS.md`, whichever your agents read), as it is; [the command's reference](../../packages/cli/README.md#a-private-pack-and-a-bound-directory) shows it.
+3. **Tell the agents.** Nothing tells an agent to look until the project says so: put the sentence the command prints into the project's agreement (`AGENTS.md`, or `CLAUDE.md` where that is the file your agents read), as it is; [the command's reference](../../packages/cli/README.md#a-private-pack-and-a-bound-directory) shows it.
 
 From then on an agent in the project reads the pack without naming it, and any pack by its address:
 

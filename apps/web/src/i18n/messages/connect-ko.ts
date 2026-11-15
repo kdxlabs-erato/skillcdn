@@ -27,9 +27,9 @@ export const connectKo: typeof connectEn = {
     title: "에이전트가 직접 설정하게 하기",
     lead: "MCP 서버 없이도 돼요. 명령을 실행할 수 있는 에이전트라면 skillcdn 명령으로 이 스킬을 읽을 수 있어요. 에이전트의 대화창에서 이렇게 말하세요:",
     message: (address: string) =>
-      `이 프로젝트에서 npm install -g @skillcdn/cli 와 skillcdn use ${address} 를 실행하고, 출력되는 문장을 CLAUDE.md나 AGENTS.md에 넣어 줘.`,
+      `이 프로젝트에서 npm install -g @skillcdn/cli 와 skillcdn use ${address} 를 실행하고, 출력되는 문장을 AGENTS.md에(CLAUDE.md를 읽는다면 거기에) 넣어 줘.`,
     privateMessage: (address: string, origin: string) =>
-      `이 프로젝트에서 npm install -g @skillcdn/cli, skillcdn use ${address}, skillcdn login --url ${origin} 을 차례로 실행해 줘. use가 출력하는 문장은 CLAUDE.md나 AGENTS.md에 넣고, login이 보여 주는 주소와 코드를 알려 줘.`,
+      `이 프로젝트에서 npm install -g @skillcdn/cli, skillcdn use ${address}, skillcdn login --url ${origin} 을 차례로 실행해 줘. use가 출력하는 문장은 AGENTS.md에(CLAUDE.md를 읽는다면 거기에) 넣고, login이 보여 주는 주소와 코드를 알려 줘.`,
     rest: "에이전트가 명령을 설치하고 이 프로젝트를 스킬에 연결해요. 그다음부터는 작업에 필요할 때마다 명령으로 스킬을 읽어요.",
     privateRest:
       "에이전트가 명령을 설치하고 이 프로젝트를 스킬에 연결해요. 비공개 저장소라서 주소와 코드를 보여 주는데, 로그인한 채로 그 주소를 열고 같은 코드인지 확인한 다음 승인하면 돼요.",

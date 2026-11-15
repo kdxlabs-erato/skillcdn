@@ -298,8 +298,10 @@ describe("a pack at a deployment", () => {
     expect(bound.code).toBe(0);
     expect(bound.out).toContain("This directory reads /gh/acme/skills at https://skillcdn.example");
     // And how the agents that work here learn of it: the sentence for the checkout's agreement.
-    expect(bound.out).toContain("CLAUDE.md or AGENTS.md");
-    expect(bound.out).toContain("**Bound to a pack?** When .skillcdn.json is in this checkout");
+    expect(bound.out).toContain("AGENTS.md, or CLAUDE.md where that is the file agents read");
+    expect(bound.out).toContain(
+      "**Bound to a pack?** Before the first step, run `skillcdn status`: when it names a pack",
+    );
     const { code, out } = await run(["skill", "marketing/ads/SKILL.md"], deployment, { directory });
     expect(code).toBe(0);
     expect(out).toContain("Skill: ads");

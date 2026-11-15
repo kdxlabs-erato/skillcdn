@@ -34,9 +34,9 @@ export const connectEn = {
     title: "Or let the agent set it up itself",
     lead: "No MCP server needed: an agent that runs commands can read these skills with the skillcdn command. Tell your agent, in its own chat:",
     message: (address: string) =>
-      `Run npm install -g @skillcdn/cli and skillcdn use ${address} in this project, and add the sentence it prints to CLAUDE.md or AGENTS.md.`,
+      `Run npm install -g @skillcdn/cli and skillcdn use ${address} in this project, and add the sentence it prints to AGENTS.md, or to CLAUDE.md if that is the file you read.`,
     privateMessage: (address: string, origin: string) =>
-      `Run npm install -g @skillcdn/cli, skillcdn use ${address} and skillcdn login --url ${origin} in this project. Add the sentence use prints to CLAUDE.md or AGENTS.md, and tell me the address and the code login shows.`,
+      `Run npm install -g @skillcdn/cli, skillcdn use ${address} and skillcdn login --url ${origin} in this project. Add the sentence use prints to AGENTS.md, or to CLAUDE.md if that is the file you read, and tell me the address and the code login shows.`,
     rest: "The agent installs the command and connects this project to the skills. From then on it reads them with the command whenever a task calls for one.",
     privateRest:
       "The agent installs the command and connects this project to the skills. Because the repository is private, it shows you an address and a code: open the address signed in, check that it shows the same code, and approve.",
