@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers/promises";
 import type {
   IndexEntry,
   SnapshotDiagnostic,
@@ -141,7 +142,20 @@ export interface BuildIndexOptions {
   readonly commit: string;
   readonly limits: IndexLimits;
   readonly signal: AbortSignal;
+  /**
+   * How the build gives the process back while it reads the bodies, every {@link TEXT_PER_TURN}
+   * characters (ADR-0106); left out, the next turn of the event loop, so that a server indexing
+   * in the process that answers its requests goes on answering them.
+   */
+  readonly pause?: (() => Promise<void>) | undefined;
 }
+
+/**
+ * How much text the build reads, parses and makes a search vector of between two turns of the
+ * event loop (ADR-0106): a few tens of milliseconds of the work, far below what a request waits
+ * for without noticing, and the turns themselves cost nothing to speak of.
+ */
+export const TEXT_PER_TURN = 64 * 1024;
 
 interface Candidate {
   readonly entry: TreeEntry;
@@ -215,6 +229,18 @@ async function forEachConcurrently<T>(
  */
 export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<SnapshotIndex> {
   const { gitHost, blobStore, coordinates, commit, limits, signal } = options;
+  const pause = options.pause ?? (() => setImmediate());
+  // What has been read since the process was last given back; the awaits between the reads do not
+  // give it back when the bodies are in hand, since they resolve before any request is looked at.
+  let readSinceTurn = 0;
+  const breathe = async (characters: number): Promise<void> => {
+    readSinceTurn += characters;
+    if (readSinceTurn >= TEXT_PER_TURN) {
+      readSinceTurn = 0;
+      await pause();
+      signal.throwIfAborted();
+    }
+  };
   const tree = await gitHost.getTree(coordinates, commit);
   signal.throwIfAborted();
   // A listing that may be missing a manifest cannot be published: a manifest that was never seen
@@ -594,6 +620,7 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
     for (const { entry, kind } of permitted) {
       const directory = parentDirectory(entry.path);
       const text = admitted.has(entry.path) ? texts.get(entry.hash) : undefined;
+      await breathe(text?.length ?? 0);
       const base = {
         path: entry.path,
         size: entry.size,
@@ -881,6 +908,7 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
   };
   for (const candidate of reading) {
     indexDocument(candidate, false);
+    await breathe(texts.get(candidate.entry.hash)?.length ?? 0);
   }
 
   // Links extend readability, not the catalog. The graph is evaluated once per repository and
@@ -911,7 +939,10 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
       }
     }
     await fetchBodies(next, limits.maxIndexedFileBytes);
-    for (const candidate of next) indexDocument(candidate, true);
+    for (const candidate of next) {
+      indexDocument(candidate, true);
+      await breathe(texts.get(candidate.entry.hash)?.length ?? 0);
+    }
     frontier = next.flatMap(({ entry }) => {
       const document = documents.get(entry.path);
       return document === undefined ? [] : [document];
@@ -1302,9 +1333,13 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
   };
   for (const document of documents.values()) {
     checkQuotations(document);
+    if (document.frontMatter?.derived !== undefined) {
+      await breathe(texts.get(document.blobSha)?.length ?? 0);
+    }
   }
 
-  const entries: IndexEntry[] = files.map((entry) => {
+  const entries: IndexEntry[] = [];
+  const entryOf = (entry: TreeEntry): IndexEntry => {
     const skill = skills.get(parentDirectory(entry.path));
     const indexed =
       skill !== undefined && skill.path === entry.path
@@ -1355,7 +1390,15 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
       visible,
       ...digested,
     };
-  });
+  };
+  for (const entry of files) {
+    const indexed = entryOf(entry);
+    entries.push(indexed);
+    // A file with links reads the outlines of the files its fragments name.
+    if ((indexed.frontMatter?.references?.length ?? 0) > 0) {
+      await breathe(texts.get(entry.hash)?.length ?? 0);
+    }
+  }
 
   return {
     entries,

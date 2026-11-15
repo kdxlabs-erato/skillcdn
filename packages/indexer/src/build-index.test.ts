@@ -15,7 +15,7 @@ import {
   type TreeEntry,
 } from "@skillcdn/core";
 import { describe, expect, it } from "vitest";
-import { buildSnapshotIndex } from "./build-index.js";
+import { buildSnapshotIndex, TEXT_PER_TURN } from "./build-index.js";
 import { gitBlobHash } from "./git-hash.js";
 import { INDEX_LIMIT_DEFAULTS } from "./limits.js";
 
@@ -37,6 +37,7 @@ async function index(
     unreadable?: string[];
     symlinks?: string[];
     truncated?: boolean;
+    pause?: () => Promise<void>;
   } = {},
 ) {
   const bytes = new Map<string, Uint8Array>();
@@ -90,6 +91,7 @@ async function index(
     commit: "a".repeat(40),
     limits: { ...INDEX_LIMIT_DEFAULTS, ...options.limits },
     signal: new AbortController().signal,
+    pause: options.pause,
   });
   return {
     ...result,
@@ -1294,5 +1296,49 @@ describe("a document made from the pack's documents (ADR-0083)", () => {
     const plain = await check(note("Nothing the chapter says.", undefined, ""));
     expect(plain.diagnostics).toEqual([]);
     expect(plain.byPath.get("docs/notes.md")?.frontMatter?.derived).toBeUndefined();
+  });
+});
+
+describe("the process the build runs in (ADR-0106)", () => {
+  // Two hundred documents of some four thousand characters: far more text than one turn reads.
+  const documents = Object.fromEntries(
+    Array.from({ length: 200 }, (_, at) => [
+      `docs/page-${String(at).padStart(3, "0")}.md`,
+      `# Page ${at}
+
+${"How the office runs, with a [link](page-000.md#page-0). ".repeat(70)}
+`,
+    ]),
+  );
+  const total = Object.values(documents).reduce((sum, text) => sum + text.length, 0);
+
+  it("gives the process back as it reads, and makes the same index", async () => {
+    let pauses = 0;
+    const paused = await index(documents, {
+      pause: async () => {
+        pauses += 1;
+      },
+    });
+    // Once a turn of text through the documents, and again through their links.
+    expect(pauses).toBeGreaterThanOrEqual(Math.floor(total / TEXT_PER_TURN));
+    const whole = await index(documents);
+    expect(paused.entries).toEqual(whole.entries);
+    expect(paused.diagnostics).toEqual(whole.diagnostics);
+  });
+
+  it("lets a timer run while it reads, with nothing passed", async () => {
+    let built = false;
+    let timerRanFirst: boolean | undefined;
+    const timer = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        timerRanFirst = !built;
+        resolve();
+      }, 1);
+    });
+    await index(documents).then(() => {
+      built = true;
+    });
+    await timer;
+    expect(timerRanFirst).toBe(true);
   });
 });
