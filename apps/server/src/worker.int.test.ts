@@ -45,7 +45,7 @@ import { InferenceError } from "@skillcdn/inference";
 import { pino } from "pino";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { EmbeddingScope } from "./config/config.js";
-import { embedSnapshotSlice } from "./jobs/embed-snapshot.js";
+import { embedSnapshotSlice, reuseKnownVectors } from "./jobs/embed-snapshot.js";
 import {
   AHEAD_QUEUE,
   EMBED_QUEUE,
@@ -660,6 +660,92 @@ describe("the worker", () => {
     expect(await embedLong(fake.embedder, "\n\n\n")).toMatchObject({ sections: 1, reused: 1 });
   });
 
+  it("gives a commit just indexed the vectors its texts had, and leaves the rest to the worker (ADR-0107)", async () => {
+    const written = [
+      "# Onboarding",
+      "What a new hire does in the first week, day by day.",
+      "## Accounts",
+      "Ask the office for a laptop and the accounts it needs.",
+      "## Mentors",
+      "Each new hire is given a mentor from another team.",
+      "",
+    ].join("\n\n");
+    const edited = written.replace("from another team.", "from another team, for a month.");
+    const sections = sectionsOf(written).length;
+    const deps = {
+      database: testDatabase.database,
+      blobs: createBlobStore(testDatabase.database),
+      embedder: fake.embedder,
+      policy: { scope: "all" as const, entitlements: allowEverything },
+      lists: noLists,
+      usage: discardUsage,
+      clock,
+      logger,
+    };
+    const snapshotOf = (text: string) =>
+      madeSnapshot({ visibility: "public", files: [{ path: "docs/onboarding.md", text }] });
+    const jobOf = (made: Awaited<ReturnType<typeof snapshotOf>>): EmbedJob => ({
+      ...made.scope,
+      repoId: made.repo.repoId,
+      commitSha: made.commit,
+      key: KEY,
+      reason: "designated",
+    });
+    const before = await snapshotOf(written);
+    expect(await embedSnapshotSlice(deps, jobOf(before))).toMatchObject({ sections });
+
+    // The commit of the edit, just indexed: every section but the one edited is found by its text.
+    const after = await snapshotOf(edited);
+    const [served] = await servedEntries(testDatabase.database, after.scope);
+    if (served === undefined) throw new Error("the snapshot serves its document");
+    const body = served.blobSha;
+    const calls = fake.calls.length;
+    expect(await reuseKnownVectors(deps, after.scope, KEY)).toEqual({
+      whole: 0,
+      unfinished: 1,
+      sections: sections - 1,
+    });
+    expect(fake.calls.length).toBe(calls);
+    // Searched by meaning at once, by what it still says.
+    const accounts = embeddedTextsOf(served, edited).find((item) => item.text.includes("laptop"));
+    const found = await searchSectionVectors(
+      testDatabase.database,
+      after.scope,
+      "",
+      KEY,
+      vectorOf(accounts?.text ?? ""),
+      1,
+    );
+    expect(found[0]).toMatchObject({
+      path: "docs/onboarding.md",
+      heading: ["Onboarding", "Accounts"],
+    });
+    expect(found[0]?.similarity).toBeCloseTo(1, 5);
+    // Still the worker's: it embeds the section edited, and nothing else, and the body is done.
+    expect(await blobsWithoutVectors(testDatabase.database, KEY, [body])).toEqual(new Set([body]));
+    expect(await embedSnapshotSlice(deps, jobOf(after))).toMatchObject({
+      status: "embedded",
+      bodies: 1,
+      sections,
+      reused: sections - 1,
+    });
+    expect(fake.calls.slice(calls).flat()).toHaveLength(1);
+    expect(fake.calls.at(-1)?.[0]).toContain("for a month.");
+    expect(await blobsWithoutVectors(testDatabase.database, KEY, [body])).toEqual(new Set());
+    // A commit with nothing left to embed, or more than a change, is given nothing here.
+    expect(await reuseKnownVectors(deps, after.scope, KEY)).toEqual({
+      whole: 0,
+      unfinished: 0,
+      sections: 0,
+    });
+    const another = await snapshotOf(`${edited}\nOne more line.\n`);
+    expect(await reuseKnownVectors(deps, another.scope, KEY, 0)).toEqual({
+      whole: 0,
+      unfinished: 0,
+      sections: 0,
+    });
+  });
+
   it("embeds the beginnings of texts a call could not embed in its time, once (ADR-0105)", async () => {
     // A server that runs out of time on any call holding a text of more than 300 estimated
     // tokens: a section of hashes, dense in tokens, is one, and the call it is in times out.
@@ -1048,6 +1134,57 @@ describe("the worker", () => {
     });
     await triggers.onIndexed(mountOf("private"), indexed);
     expect(sent).toHaveLength(2);
+
+    // Where the bodies and the embedder's cut are given, the commit is first given the vectors
+    // its texts had already (ADR-0107): the pack embedded, then a commit that adds a section.
+    const embedDeps = {
+      database: testDatabase.database,
+      blobs: createBlobStore(testDatabase.database),
+      embedder: fake.embedder,
+      policy: { scope: "all" as const, entitlements: allowEverything },
+      lists: noLists,
+      usage: discardUsage,
+      clock,
+      logger,
+    };
+    await embedSnapshotSlice(embedDeps, { ...indexed, key: KEY, reason: "designated" });
+    const grown = await madeSnapshot({
+      visibility: "public",
+      files: [
+        {
+          path: "SKILLCDN.md",
+          kind: "manifest",
+          text: "---\ndescription: A pack.\n---\n",
+          frontMatter: { metadata: {}, warnings: [], documents: ["docs"] },
+        },
+        { path: "docs/a.md", text: "# A\n\nText.\n\n## Later\n\nA section added.\n" },
+      ],
+    });
+    const reusing = createEmbedTriggers({
+      database: testDatabase.database,
+      jobs: recording,
+      key: KEY,
+      policy: { scope: "public", entitlements: allowEverything },
+      lists: noLists,
+      clock,
+      logger,
+      reuse: { blobs: embedDeps.blobs, embedder: fake.embedder },
+    });
+    const logged = logs.length;
+    await reusing.onIndexed(
+      { repo: { host: "gh", repository: grown.repository } } as unknown as Mount,
+      { ...grown.scope, repoId: grown.repo.repoId, commitSha: grown.commit },
+    );
+    expect(sent.at(-1)).toMatchObject({ reason: "indexed", snapshotId: grown.scope.snapshotId });
+    expect(logs.slice(logged)).toContainEqual(
+      expect.objectContaining({
+        whole: 0,
+        unfinished: 1,
+        sections: 1,
+        msg: "a commit was given the vectors its texts had already",
+      }),
+    );
+    sent.pop();
 
     // A repository that is no pack (ADR-0072): its index queues nothing, and a search queues it
     // with the rest, behind every pack.

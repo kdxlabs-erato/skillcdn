@@ -235,6 +235,10 @@ export function createApi(
           lists,
           clock,
           logger,
+          reuse:
+            ports.meaning === undefined
+              ? undefined
+              : { blobs: blobStore, embedder: ports.meaning.embedder },
         });
   // What the operator reads and asks of the search by meaning through the admin API.
   const embeddings = new EmbeddingReads({

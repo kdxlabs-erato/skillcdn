@@ -12,6 +12,7 @@ import {
   sectionVectors,
   snapshotEmbeddings,
   snapshots,
+  unfinishedBodies,
 } from "../schema.js";
 import type { RepoScope } from "./repos.js";
 import type { SnapshotScope } from "./snapshots.js";
@@ -476,6 +477,15 @@ export async function deleteEmbeddingsOutsideKey(
       ),
     )
     .returning({ id: snapshotEmbeddings.snapshotId });
+  await db
+    .delete(unfinishedBodies)
+    .where(
+      or(
+        ne(unfinishedBodies.model, key.model),
+        ne(unfinishedBodies.dimensions, key.dimensions),
+        ne(unfinishedBodies.sectioningVersion, key.sectioningVersion),
+      ),
+    );
   const present = await db.execute<{ present: boolean }>(
     sql`select to_regclass('section_vectors') is not null as present`,
   );

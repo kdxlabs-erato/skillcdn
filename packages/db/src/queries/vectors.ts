@@ -8,6 +8,7 @@ import {
   sectionHalves,
   sectionVectors,
   snapshots,
+  unfinishedBodies,
 } from "../schema.js";
 import { BY_PATH, FINDABLE, inSnapshot, underPath } from "./entries.js";
 import type { SnapshotScope } from "./snapshots.js";
@@ -112,6 +113,14 @@ export const underKey = (key: VectorKey) =>
     eq(sectionVectors.sectioningVersion, key.sectioningVersion),
   );
 
+/** The rows of a table keyed as `section_vectors` is that are under the key. */
+const underKeyOf = (table: typeof unfinishedBodies, key: VectorKey): SQL | undefined =>
+  and(
+    eq(table.model, key.model),
+    eq(table.dimensions, key.dimensions),
+    eq(table.sectioningVersion, key.sectioningVersion),
+  );
+
 /** The text form the extension reads. A value that is not a number has no place in a vector. */
 export function vectorLiteral(vector: Float32Array): string {
   const parts: string[] = [];
@@ -125,23 +134,57 @@ export function vectorLiteral(vector: Float32Array): string {
 }
 
 /**
+ * What a write says of the bodies it writes for beyond their vectors (ADR-0107): those of which
+ * it writes some sections and the rest are still to be embedded, and those whose sections it
+ * writes to the end, which were such a body before.
+ */
+export interface BodiesWritten {
+  readonly unfinished?: readonly string[] | undefined;
+  readonly finished?: readonly string[] | undefined;
+}
+
+/**
  * Writes the vectors of sections under one key, all of them or none, and says how many were new.
  * A section already there is left as it is: the same bytes under the same model and rules give
  * the same vector. A vector of other dimensions than the key's is refused by the table. The
  * caller writes a body's sections together, since a body with any section written counts as
- * done ({@link blobsWithoutVectors}); one transaction keeps that true through an interruption,
- * and the vectors of the body's parts, and of its sections at half precision, are made in it
- * from what is then stored (ADR-0092, ADR-0103).
+ * done ({@link blobsWithoutVectors}), unless the write names it `unfinished`; one transaction
+ * keeps that true through an interruption, and the vectors of the body's parts, and of its
+ * sections at half precision, are made in it from what is then stored (ADR-0092, ADR-0103).
  */
 export async function writeSectionVectors(
   database: Database,
   key: VectorKey,
   items: readonly SectionVector[],
+  bodies: BodiesWritten = {},
 ): Promise<number> {
-  if (items.length === 0) {
+  if (items.length === 0 && (bodies.finished ?? []).length === 0) {
     return 0;
   }
   return drizzleOf(database).transaction(async (tx) => {
+    const finished = [...new Set(bodies.finished ?? [])];
+    if (finished.length > 0) {
+      await tx
+        .delete(unfinishedBodies)
+        .where(and(underKeyOf(unfinishedBodies, key), inArray(unfinishedBodies.blobSha, finished)));
+    }
+    const unfinished = [...new Set(bodies.unfinished ?? [])];
+    if (unfinished.length > 0) {
+      await tx
+        .insert(unfinishedBodies)
+        .values(
+          unfinished.map((blobSha) => ({
+            blobSha,
+            model: key.model,
+            dimensions: key.dimensions,
+            sectioningVersion: key.sectioningVersion,
+          })),
+        )
+        .onConflictDoNothing();
+    }
+    if (items.length === 0) {
+      return 0;
+    }
     let written = 0;
     for (let start = 0; start < items.length; start += WRITE_BATCH_SIZE) {
       const rows = items.slice(start, start + WRITE_BATCH_SIZE).map((item) => ({
@@ -399,8 +442,10 @@ export async function vectorsOfTexts(
 
 /**
  * Which of these bodies have no vector under the key: what is left to embed. A body with any
- * section written counts as done, since a body's sections are written together; a body that
- * cuts into no section is never written and stays here, so the caller leaves those out.
+ * section written counts as done, since a body's sections are written together, except one
+ * written as unfinished, some of its sections given the vectors their texts had when its commit
+ * was indexed (ADR-0107); a body that cuts into no section is never written and stays here, so
+ * the caller leaves those out.
  */
 export async function blobsWithoutVectors(
   database: Database,
@@ -422,6 +467,18 @@ export async function blobsWithoutVectors(
       );
     for (const row of rows) {
       missing.delete(row.sha);
+    }
+    const unfinished = await db
+      .select({ sha: unfinishedBodies.blobSha })
+      .from(unfinishedBodies)
+      .where(
+        and(
+          underKeyOf(unfinishedBodies, key),
+          inArray(unfinishedBodies.blobSha, unique.slice(start, start + HASH_BATCH_SIZE)),
+        ),
+      );
+    for (const row of unfinished) {
+      missing.add(row.sha);
     }
   }
   return missing;
@@ -498,6 +555,19 @@ export async function deleteUnreferencedSectionVectors(
   }
   let removed = 0;
   for (let start = 0; start < blobShas.length; start += HASH_BATCH_SIZE) {
+    await db
+      .delete(unfinishedBodies)
+      .where(
+        and(
+          inArray(unfinishedBodies.blobSha, blobShas.slice(start, start + HASH_BATCH_SIZE)),
+          notExists(
+            db
+              .select({ sha: indexEntries.blobSha })
+              .from(indexEntries)
+              .where(eq(indexEntries.blobSha, unfinishedBodies.blobSha)),
+          ),
+        ),
+      );
     const rows = await db
       .delete(sectionVectors)
       .where(

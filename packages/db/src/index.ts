@@ -283,6 +283,7 @@ export {
   type UserRecord,
 } from "./queries/users.js";
 export {
+  type BodiesWritten,
   blobsWithoutVectors,
   countSkillBodiesWithoutHead,
   fillPartVectors,

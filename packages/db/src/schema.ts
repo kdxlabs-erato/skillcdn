@@ -649,6 +649,31 @@ export const sectionHalves = pgTable(
 );
 
 /**
+ * A body some of whose sections have vectors under a key and the rest none yet (ADR-0107). When
+ * a commit is indexed, the sections of a changed file whose texts have vectors already are given
+ * them at once, so that the file is searched by the meaning of what it still says before the
+ * worker reaches it. Whatever asks what is left to embed reads such a body as not embedded, and
+ * the worker drops its row when it writes the rest. Content-addressed and keyed as
+ * `section_vectors` is, and not tenant data: it names a body and nothing else.
+ */
+export const unfinishedBodies = pgTable(
+  "unfinished_bodies",
+  {
+    blobSha: text().notNull(),
+    model: text().notNull(),
+    dimensions: integer().notNull(),
+    sectioningVersion: integer().notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({
+      name: "unfinished_bodies_pkey",
+      columns: [table.blobSha, table.model, table.dimensions, table.sectioningVersion],
+    }),
+  ],
+);
+
+/**
  * How far the sections of one snapshot have been embedded under one key (ADR-0064): the worker
  * adds to a row as it writes the vectors of each body, and marks it complete when the snapshot's
  * last body is done. A ready snapshot without a complete row under the configured key is what

@@ -237,7 +237,16 @@ export function createWorker(config: WorkerConfig, ports: WorkerPorts): Worker {
       } else {
         // A commit the worker finds without an index is embedded as one the api indexed is.
         const triggers = embedding
-          ? createEmbedTriggers({ database, jobs, key, policy, lists, clock, logger })
+          ? createEmbedTriggers({
+              database,
+              jobs,
+              key,
+              policy,
+              lists,
+              clock,
+              logger,
+              reuse: embedder === undefined ? undefined : { blobs, embedder },
+            })
           : undefined;
         const packs = config.packs;
         const indexAhead = createIndexAhead({

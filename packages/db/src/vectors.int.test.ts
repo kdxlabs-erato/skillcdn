@@ -34,7 +34,7 @@ import {
   writeSectionVectors,
   writeSnapshotIndex,
 } from "./index.js";
-import { partVectors, sectionHalves, snapshots } from "./schema.js";
+import { partVectors, sectionHalves, snapshots, unfinishedBodies } from "./schema.js";
 import {
   createTestDatabase,
   DEV_DATABASE_URL,
@@ -419,6 +419,60 @@ describe("section vectors", () => {
     expect(await blobsWithoutVectors(database, KEY, ["blob-hashed", "blob-billing"])).toEqual(
       new Set(),
     );
+  });
+
+  it("count a body written as unfinished as left to embed, until it is written to the end (ADR-0107)", async () => {
+    const [first, second, third] = vectorsOf("blob-edited", BILLING, [
+      [1, 0, 0, 0],
+      [0, 1, 0, 0],
+      [0, 0, 1, 0],
+    ]);
+    if (first === undefined || second === undefined || third === undefined) throw new Error("3");
+    // Two of three sections given at once, the third to come.
+    expect(
+      await writeSectionVectors(database, KEY, [first, second], { unfinished: ["blob-edited"] }),
+    ).toBe(2);
+    expect(await blobsWithoutVectors(database, KEY, ["blob-edited", "blob-billing"])).toEqual(
+      new Set(["blob-edited"]),
+    );
+    // Searched meanwhile by what it has: its part is the mean of the two.
+    expect(await partsOf("blob-edited")).toEqual([
+      { part: 0, sections: 2, vector: [0.5, 0.5, 0, 0] },
+    ]);
+    // Under another key it is nothing at all, as it was.
+    const other = { ...KEY, model: "other-model" };
+    expect(await blobsWithoutVectors(database, other, ["blob-edited"])).toEqual(
+      new Set(["blob-edited"]),
+    );
+    // The worker writes the body whole, and it is done, with its part made of all three.
+    expect(
+      await writeSectionVectors(database, KEY, [first, second, third], {
+        finished: ["blob-edited"],
+      }),
+    ).toBe(1);
+    expect(await blobsWithoutVectors(database, KEY, ["blob-edited"])).toEqual(new Set());
+    expect(await partsOf("blob-edited")).toEqual([
+      { part: 0, sections: 3, vector: [0.333, 0.333, 0.333, 0] },
+    ]);
+    // A body written as unfinished that no entry names goes with its vectors.
+    expect(
+      await writeSectionVectors(database, KEY, [{ ...first, blobSha: "blob-orphan" }], {
+        unfinished: ["blob-orphan"],
+      }),
+    ).toBe(1);
+    const scope = await readySnapshot([entry({ path: "orphan.md", blobSha: "blob-orphan" })]);
+    const [repoId] = await drizzleOf(database)
+      .select({ repoId: snapshots.repoId })
+      .from(snapshots)
+      .where(eq(snapshots.id, scope.snapshotId))
+      .then((rows) => rows.map((row) => row.repoId));
+    await purgeRepositoryIndex(database, repoId ?? "");
+    expect(
+      await drizzleOf(database)
+        .select({ blobSha: unfinishedBodies.blobSha })
+        .from(unfinishedBodies)
+        .where(eq(unfinishedBodies.blobSha, "blob-orphan")),
+    ).toEqual([]);
   });
 
   it("have the vectors of the body's parts made with them, the mean of every few sections (ADR-0092)", async () => {

@@ -15,6 +15,7 @@ import {
 } from "@skillcdn/core";
 import {
   addEmbeddingUsage,
+  type BodiesWritten,
   blobsWithoutVectors,
   type Database,
   type EmbedTier,
@@ -227,8 +228,10 @@ export async function embedTexts(
   key: VectorKey,
   wanted: readonly TextToEmbed[],
   signal?: AbortSignal | undefined,
+  bodies: BodiesWritten = {},
 ): Promise<EmbeddedTexts | undefined> {
   if (wanted.length === 0) {
+    await writeSectionVectors(deps.database, key, [], bodies);
     return { sections: 0, tokens: 0, reused: 0, shortened: 0 };
   }
   const texts = wanted.map((item) => item.text);
@@ -286,7 +289,7 @@ export async function embedTexts(
     shortened += embedded.shortened;
     shortenedTo ??= embedded.shortenedTo;
   }
-  await writeSectionVectors(deps.database, key, items);
+  await writeSectionVectors(deps.database, key, items, bodies);
   return { sections: items.length, tokens, reused, shortened, shortenedTo };
 }
 
@@ -299,12 +302,103 @@ function embedBody(
   text: string,
   signal: AbortSignal | undefined,
 ): Promise<EmbeddedTexts | undefined> {
+  // The body is written whole, so one written as unfinished when its commit was indexed is done.
   return embedTexts(
     deps,
     key,
     embeddedTextsOf(entry, text).map((item) => ({ ...item, blobSha })),
     signal,
+    { finished: [blobSha] },
   );
+}
+
+/**
+ * How many bodies of a commit just indexed are given the vectors their texts have already. More
+ * is a new pack or a change of most of one, which have little to find and are the worker's.
+ */
+export const REUSE_BODIES = 200;
+
+/** What {@link reuseKnownVectors} gave: bodies given every vector, some of them, and the sections. */
+export interface ReusedVectors {
+  readonly whole: number;
+  readonly unfinished: number;
+  readonly sections: number;
+}
+
+/**
+ * Gives the bodies of a snapshot just indexed the vectors their texts have already under the
+ * key (ADR-0107), at once and without a call to the embedder: a file edited in one place is
+ * searched by the meaning of what it still says from the moment its commit is served, where it
+ * waited for the worker to reach it. A body some of whose texts have no vector is written as
+ * unfinished, and the worker still embeds the rest. Nothing is done when more than
+ * {@link REUSE_BODIES} bodies are left to embed.
+ */
+export async function reuseKnownVectors(
+  deps: {
+    readonly database: Database;
+    readonly blobs: Pick<BlobStore, "read">;
+    readonly embedder: Pick<Embedder, "maxTextChars" | "maxTextTokens">;
+  },
+  scope: SnapshotScope,
+  key: VectorKey,
+  limit: number = REUSE_BODIES,
+): Promise<ReusedVectors> {
+  const { database } = deps;
+  const served = await servedEntries(database, scope);
+  const allowed = meaningSearchOf(served);
+  const entries = served.filter((entry) => embeddable(entry) && allowed(entry.path));
+  const missing = await blobsWithoutVectors(
+    database,
+    key,
+    entries.map((entry) => entry.blobSha),
+  );
+  const done = { whole: 0, unfinished: 0, sections: 0 };
+  if (missing.size === 0 || missing.size > limit) {
+    return done;
+  }
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (!missing.has(entry.blobSha) || seen.has(entry.blobSha)) {
+      continue;
+    }
+    seen.add(entry.blobSha);
+    const text = await deps.blobs.read(entry.blobSha);
+    if (text === undefined) {
+      continue;
+    }
+    const texts = embeddedTextsOf(entry, text);
+    const hashes = texts.map((item) => textHashOf(item.text, deps.embedder));
+    const known = await vectorsOfTexts(database, key, hashes);
+    const items: SectionVector[] = texts.flatMap((item, at) => {
+      const hash = hashes[at];
+      const vector = hash === undefined ? undefined : known.get(hash);
+      return vector === undefined
+        ? []
+        : [
+            {
+              blobSha: entry.blobSha,
+              section: item.section,
+              heading: item.heading,
+              offset: item.offset,
+              length: item.length,
+              vector,
+              textHash: hash,
+            },
+          ];
+    });
+    if (items.length === 0) {
+      continue;
+    }
+    const whole = items.length === texts.length;
+    await writeSectionVectors(database, key, items, whole ? {} : { unfinished: [entry.blobSha] });
+    done.sections += items.length;
+    if (whole) {
+      done.whole += 1;
+    } else {
+      done.unfinished += 1;
+    }
+  }
+  return done;
 }
 
 /** The bytes already embedded that a bound counts, read once per slice where the bound exists. */

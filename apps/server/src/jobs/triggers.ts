@@ -1,4 +1,4 @@
-import type { Clock } from "@skillcdn/core";
+import type { BlobStore, Clock, Embedder } from "@skillcdn/core";
 import {
   type Database,
   getSnapshotEmbedding,
@@ -11,6 +11,7 @@ import type { IndexedSnapshot } from "../indexer/snapshot-service.js";
 import type { Logger } from "../logger.js";
 import type { Mount } from "../mounts/mount-service.js";
 import type { OperatorLists } from "../operator/lists.js";
+import { reuseKnownVectors } from "./embed-snapshot.js";
 import { sendEmbedJob } from "./queues.js";
 import { decideEmbedding, type EmbedPolicy, withinScope } from "./scope.js";
 
@@ -34,6 +35,16 @@ export interface EmbedTriggerDependencies {
   readonly clock: Clock;
   readonly logger: Logger;
   readonly rememberMs?: number | undefined;
+  /**
+   * The bodies and how the embedder cuts a text, for the vectors a commit just indexed is given
+   * from the texts it shares with what was embedded before (ADR-0107); left out, none are.
+   */
+  readonly reuse?:
+    | {
+        readonly blobs: Pick<BlobStore, "read">;
+        readonly embedder: Pick<Embedder, "maxTextChars" | "maxTextTokens">;
+      }
+    | undefined;
 }
 
 export interface EmbedTriggers {
@@ -77,6 +88,24 @@ export function createEmbedTriggers(deps: EmbedTriggerDependencies): EmbedTrigge
       const tier = await tierOfSnapshot(database, snapshot, await lists.listedKeys());
       if (tier === undefined || tier === "other") {
         return;
+      }
+      if (deps.reuse !== undefined) {
+        // Before the job, which the worker may take at once: what it finds then is what is left.
+        const reused = await reuseKnownVectors({ database, ...deps.reuse }, snapshot, key).catch(
+          (error: unknown) => {
+            logger.warn(
+              { err: error, snapshot: snapshot.snapshotId },
+              "the vectors a commit shares with the one before could not be given it",
+            );
+            return undefined;
+          },
+        );
+        if (reused !== undefined && reused.sections > 0) {
+          logger.info(
+            { snapshot: snapshot.snapshotId, ...reused },
+            "a commit was given the vectors its texts had already",
+          );
+        }
       }
       await sendEmbedJob(jobs, { ...snapshot, key, reason: "indexed", tier });
     },
