@@ -32,7 +32,7 @@ export {
 } from "./brand.js";
 export { browseCatalogFiles, type CatalogFile, folderOverview } from "./browse-tree.js";
 export { decodeText } from "./bytes.js";
-export { contextPage } from "./context-page.js";
+export { contextLinesPage, contextPage } from "./context-page.js";
 export {
   type DocumentDerivation,
   documentDerivation,

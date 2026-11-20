@@ -29,6 +29,11 @@ export interface ToolWords {
   readonly search: string;
   readonly load: string;
   readonly read: string;
+  /**
+   * What one read of a long skill is called where it is not a page of the `load` read: the
+   * command prints a skill in parts (ADR-0108), and a section cut there continues in the next part.
+   */
+  readonly piece?: string | undefined;
 }
 
 /** The tools as the MCP endpoint names them (docs/specs/tools.md). */
@@ -656,7 +661,7 @@ export function renderSkillResult(result: SkillResult, words: ToolWords = MCP_TO
       body: result.body,
       included: result.included,
     },
-    { tool: words.load, reader: words.read },
+    { tool: words.load, reader: words.read, piece: words.piece },
   );
 
   return joinSections([

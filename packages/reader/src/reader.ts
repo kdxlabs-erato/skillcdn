@@ -9,7 +9,7 @@ import {
   type CodeResult,
   catalogGroups,
   classifyRepoFile,
-  contextPage,
+  contextLinesPage,
   DATA_CODE_DEFAULT_LIMIT,
   DATA_PAGE_MAX_CHARS,
   DATA_PAGE_MAX_FILES,
@@ -1960,7 +1960,8 @@ export class Reader<M extends MountContext = MountContext> {
         const offset = skip;
         skip = 0;
         if (remaining <= 0) return { content: "", truncated: text.length > 0 };
-        const part = contextPage(text, offset, remaining);
+        // A section cut by the page ends after a line where it can, not inside a word.
+        const part = contextLinesPage(text, offset, remaining);
         // A deferred character must precede every later section on the next page.
         remaining = part.more ? 0 : remaining - part.bytes;
         consumed += part.content.length;

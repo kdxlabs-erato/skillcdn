@@ -10,7 +10,8 @@ import { type Pack, PackError } from "./pack.js";
 
 // A pack at a deployment (ADR-0056): the five reads of its REST API through @skillcdn/client,
 // with the token a person made for it as the bearer, waiting while a first look at a commit
-// indexes it. What the API refuses is a PackError with the API's own code.
+// indexes it. What the API refuses is a PackError with the API's own code. A read asks for what
+// it reads and nothing before it: the mount is asked for by whoever needs the mount.
 
 export interface RemoteOptions {
   readonly url: string;
@@ -46,9 +47,29 @@ export function openDeployment(options: RemoteOptions): Pack {
   });
   const { address } = options;
   const wait = { timeoutMs: options.waitMs ?? DEFAULT_WAIT_MS, sleep: options.sleep };
-  /** The index is there to read from, or the deployment says why not. */
-  const indexed = async (): Promise<void> => {
+  const indexing = (answer: unknown): boolean =>
+    typeof answer === "object" &&
+    answer !== null &&
+    "status" in answer &&
+    answer.status === "indexing";
+  /**
+   * A read, asked at once: a pack whose index is there, which is nearly every read, costs no
+   * request for its mount first. Where the deployment says it is still indexing the commit, the
+   * read waits for the index and asks again.
+   */
+  const read = async <T>(ask: () => Promise<T>): Promise<T> => {
+    try {
+      const answer = await ask();
+      if (!indexing(answer)) {
+        return answer;
+      }
+    } catch (error) {
+      if (!(error instanceof ApiError && error.code === "index.indexing")) {
+        return asPackError(error);
+      }
+    }
     await whenIndexed(client, address, wait).catch(asPackError);
+    return ask().catch(asPackError);
   };
   const notReady = (status: "indexing" | "failed", errorCode?: string): never => {
     throw new PackError(
@@ -66,40 +87,34 @@ export function openDeployment(options: RemoteOptions): Pack {
       return whenIndexed(client, address, wait).catch(asPackError);
     },
     async browse(query) {
-      await indexed();
-      const body = await client.browse(address, query).catch(asPackError);
+      const body = await read(() => client.browse(address, query));
       return body.status === "ready"
         ? body
         : notReady(body.status, body.status === "failed" ? body.errorCode : undefined);
     },
     async find(query) {
-      await indexed();
-      const body = await client.find(address, query).catch(asPackError);
+      const body = await read(() => client.find(address, query));
       return body.status === "ready"
         ? body
         : notReady(body.status, body.status === "failed" ? body.errorCode : undefined);
     },
     async skill(path, cursor) {
-      await indexed();
-      const body = await client.skill(address, { path, cursor }).catch(asPackError);
+      const body = await read(() => client.skill(address, { path, cursor }));
       return body.status === "ready"
         ? body
         : notReady(body.status, body.status === "failed" ? body.errorCode : undefined);
     },
     async file(query) {
-      await indexed();
-      return client.file(address, query).catch(asPackError);
+      return read(() => client.file(address, query));
     },
     async rows(query) {
-      await indexed();
-      const body = await client.rows(address, query).catch(asPackError);
+      const body = await read(() => client.rows(address, query));
       return body.status === "ready"
         ? body
         : notReady(body.status, body.status === "failed" ? body.errorCode : undefined);
     },
     async code(query) {
-      await indexed();
-      const body = await client.code(address, query).catch(asPackError);
+      const body = await read(() => client.code(address, query));
       return body.status === "ready"
         ? body
         : notReady(body.status, body.status === "failed" ? body.errorCode : undefined);

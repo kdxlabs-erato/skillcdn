@@ -22,6 +22,7 @@ export {
   type ReadOutput,
   readNumber,
   readPack,
+  shellWord,
   wroteLine,
 } from "./read.js";
 export { DEFAULT_WAIT_MS, openDeployment, type RemoteOptions } from "./remote.js";

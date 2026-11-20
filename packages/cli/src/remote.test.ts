@@ -77,6 +77,12 @@ async function deploymentOf(root: string, indexing = 0): Promise<Deployment> {
       }
       const q = parsed.searchParams;
       const number = (name: string) => (q.get(name) === null ? undefined : Number(q.get(name)));
+      // While the commit is indexed, a read says so as the API does: in its body, or as a refusal.
+      if (state.indexing > 0 && match[1] !== "mounts") {
+        return ["browse", "find", "skills"].includes(match[1] ?? "")
+          ? json({ status: "indexing" })
+          : json({ error: { code: "index.indexing", message: "being indexed" } }, 503);
+      }
       try {
         switch (match[1]) {
           case "mounts": {
@@ -249,6 +255,55 @@ describe("a pack at a deployment", () => {
     expect(deployment.requests.filter((request) => request.url.includes("/mounts/")).length).toBe(
       3,
     );
+  });
+
+  it("asks for the mount once where a read prints from it, and not at all where it does not", async () => {
+    const root = await repository({
+      ...PACK,
+      "docs/codes.md": "# Codes\n\n| Code | Meaning |\n|---|---|\n| A1 | Open |\n",
+    });
+    const deployment = await deploymentOf(root);
+    const asked = async (args: string[]): Promise<string[]> => {
+      deployment.requests.length = 0;
+      const { code } = await run([...args, "--url", "https://skillcdn.example"], deployment);
+      expect(code).toBe(0);
+      return deployment.requests.map(
+        (request) => new URL(request.url).pathname.split("/")[3] ?? "",
+      );
+    };
+    // The words an agent is given name the pack and its commit: one look at the mount, then the read.
+    expect(await asked(["find", "gh/acme/skills", "ads"])).toEqual(["mounts", "find"]);
+    expect(await asked(["skill", "gh/acme/skills", "marketing/ads/SKILL.md"])).toEqual([
+      "mounts",
+      "skills",
+    ]);
+    expect(await asked(["file", "gh/acme/skills", "docs/guide.md"])).toEqual(["mounts", "files"]);
+    expect(await asked(["browse", "gh/acme/skills", "docs"])).toEqual(["mounts", "browse"]);
+    // The API's JSON and the data of a document are the read's own answer.
+    expect(await asked(["find", "gh/acme/skills", "ads", "--json"])).toEqual(["find"]);
+    expect(await asked(["file", "gh/acme/skills", "docs/guide.md", "--json"])).toEqual(["files"]);
+    expect(await asked(["rows", "gh/acme/skills", "docs/codes.md"])).toEqual(["rows"]);
+    expect(await asked(["code", "gh/acme/skills", "docs"])).toEqual(["code"]);
+  });
+
+  it("waits for the index where a read that asks for no mount finds the commit being indexed", async () => {
+    const root = await repository({
+      ...PACK,
+      "docs/codes.md": "# Codes\n\n| Code | Meaning |\n|---|---|\n| A1 | Open |\n",
+    });
+    for (const args of [
+      ["rows", "gh/acme/skills", "docs/codes.md"],
+      ["find", "gh/acme/skills", "ads", "--json"],
+    ]) {
+      const deployment = await deploymentOf(root, 2);
+      const { code, out } = await run([...args, "--url", "https://skillcdn.example"], deployment);
+      expect(code).toBe(0);
+      expect(out).toContain(args[0] === "rows" ? "A1" : "marketing/ads/SKILL.md");
+      // The read, the mount until its index is there, and the read again.
+      expect(
+        deployment.requests.map((request) => new URL(request.url).pathname.split("/")[3]),
+      ).toEqual([args[0], "mounts", "mounts", "mounts", args[0]]);
+    }
   });
 
   it("presents the token kept for the deployment, and no other", async () => {

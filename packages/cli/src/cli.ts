@@ -64,6 +64,7 @@ import {
   ReadMisuse,
   readNumber,
   readPack,
+  shellWord,
   wroteLine,
 } from "./read.js";
 import { asPackError, openDeployment } from "./remote.js";
@@ -293,8 +294,10 @@ under a line that names its path; then the files it has and what it refers to. <
 path of its SKILL.md from the pack's root, as skills and browse print it, or the skill://
 URI the pack names it by, which then names the pack as well. The pages the skill is read in are
 joined, up to ${OUTPUT_CHARS} characters: a skill longer than that is printed in parts, and the
-last line of a part is the command that prints the next, with its --cursor. Read every part
-before using the skill. --json prints the skill whole, from --cursor where it is given.
+last line of a part is the command that prints the next, with its --cursor. A part ends after a
+line, and a part after the first names the skill without its description, files and references.
+Read every part before using the skill. --json prints the skill whole, from --cursor where it is
+given.
 
 ${READ_OPTIONS}
 `,
@@ -909,9 +912,6 @@ const counted = (count: number, one: string, many = `${one}s`): string =>
   `${count} ${count === 1 ? one : many}`;
 
 /** A word of the command line, quoted for a shell where it needs it. */
-const shellWord = (word: string): string =>
-  /^[\w@%+=:,./~-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
-
 async function readCommand(
   command: ReadCommand,
   args: readonly string[],

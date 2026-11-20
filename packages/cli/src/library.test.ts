@@ -11,6 +11,7 @@ import {
   ReadMisuse,
   readNumber,
   readPack,
+  shellWord,
   wroteLine,
 } from "./index.js";
 import { openDirectory } from "./local.js";
@@ -89,6 +90,72 @@ describe("the reads of a pack as a library", () => {
     const code = await readPack(pack, { read: "code", path: "docs/codes.md", grep: "echo" });
     expect(code.holds).toBe("1 code block");
     expect(code.text).toContain("--- docs/codes.md > Codes (sh) ---\necho codes\n");
+  });
+
+  it("stops reading a pack that pages without end, or answers the same page again", async () => {
+    const { pack } = await directoryPack();
+    let asked = 0;
+    const wrapped = (over: Partial<Pack>): Pack => ({
+      address: pack.address,
+      source: pack.source,
+      mount: () => pack.mount(),
+      browse: (query) => pack.browse(query),
+      find: (query) => pack.find(query),
+      skill: (path, cursor) => pack.skill(path, cursor),
+      file: (query) => pack.file(query),
+      rows: (query) => pack.rows(query),
+      code: (query) => pack.code(query),
+      ...over,
+    });
+    const skillThat = (cursorOf: () => string): Pack =>
+      wrapped({
+        skill: async (path) => {
+          asked += 1;
+          const body = await pack.skill(path);
+          if (body.status !== "ready") throw new Error("the skill is there");
+          return { ...body, skill: { ...body.skill, complete: false, nextCursor: cursorOf() } };
+        },
+      });
+    const read = { read: "skill", path: "marketing/ads/SKILL.md" } as const;
+    // Every page names a new one: the read gives up at the bound, far above what a skill holds.
+    await expect(
+      readPack(
+        skillThat(() => `page-${asked}`),
+        read,
+        { json: true },
+      ),
+    ).rejects.toThrow("The skill did not complete within the pages one read takes.");
+    expect(asked).toBe(256);
+    // The page asked for comes back naming itself: the read does not ask a third time.
+    asked = 0;
+    const same = await readPack(
+      skillThat(() => "again"),
+      read,
+      { json: true },
+    ).catch((error: unknown) => error);
+    expect(same).toBeInstanceOf(PackError);
+    expect((same as PackError).code).toBe("invalid_response");
+    expect(asked).toBe(2);
+    // The listing of the pack is read the same way.
+    asked = 0;
+    const listing = wrapped({
+      find: async (query) => {
+        asked += 1;
+        const body = await pack.find({ ...query, cursor: undefined });
+        if (body.status !== "ready") throw new Error("the listing is there");
+        return { ...body, nextCursor: "again" };
+      },
+    });
+    await expect(readPack(listing, { read: "skills" })).rejects.toThrow(
+      "The pack answers more pages of its listing than one read takes.",
+    );
+    expect(asked).toBe(2);
+  });
+
+  it("names the next part of a skill by a command line a shell reads as it was meant", async () => {
+    expect(shellWord("marketing/ads/SKILL.md")).toBe("marketing/ads/SKILL.md");
+    expect(shellWord("notes for sales/SKILL.md")).toBe("'notes for sales/SKILL.md'");
+    expect(shellWord("it's")).toBe(`'it'\\''s'`);
   });
 
   it("throws what the pack does not have, and what was not asked right, for the caller to say", async () => {

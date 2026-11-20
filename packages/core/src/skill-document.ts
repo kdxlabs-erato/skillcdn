@@ -127,18 +127,24 @@ function listOfPaths(paths: readonly string[]): string {
 /**
  * The sections of a skill as a model reads them, in the order the author meant them to be read:
  * the rules that hold for the skill, then its instructions, then the files it needs on every run.
- * `continuation` names the tool whose next page completes a section that was cut.
+ * `continuation` names the tool whose next page completes a section that was cut, or with `piece`
+ * what the next read of the skill is called instead.
  */
 export function renderSkillSections(
   sections: SkillSections,
-  continuation?: { readonly tool: string; readonly reader: string },
+  continuation?: {
+    readonly tool: string;
+    readonly reader: string;
+    readonly piece?: string | undefined;
+  },
 ): string {
   const parts: string[] = [];
+  const continues =
+    continuation === undefined
+      ? ""
+      : `\n(Continues in the next ${continuation.piece ?? `${continuation.tool} page`}.)`;
   for (const rule of sections.rules) {
-    const cut =
-      rule.truncated === true && continuation !== undefined
-        ? `\n(Continues in the next ${continuation.tool} page.)`
-        : "";
+    const cut = rule.truncated === true ? continues : "";
     parts.push(`--- applicable rules: ${rule.path} ---\n${rule.body}${cut}`);
   }
   if (sections.body.length > 0) {
@@ -152,10 +158,7 @@ export function renderSkillSections(
       );
       continue;
     }
-    const cut =
-      file.truncated === true && continuation !== undefined
-        ? `\n(Continues in the next ${continuation.tool} page.)`
-        : "";
+    const cut = file.truncated === true ? continues : "";
     parts.push(`${header}\n${file.content}${cut}`);
   }
   return parts.join("\n\n");

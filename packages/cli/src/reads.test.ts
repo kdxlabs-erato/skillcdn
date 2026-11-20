@@ -299,9 +299,26 @@ describe("the reads of a directory", () => {
         expect(part.split(header).length - 1).toBeLessThanOrEqual(1);
       }
     }
+    // A part ends after a line (ADR-0113): every line of every file is printed whole.
     const printed = parts.join("\n");
-    const missing = files.flatMap(lines).filter((line) => !printed.includes(line));
-    expect(missing.length).toBeLessThanOrEqual(parts.length - 1);
+    expect(files.flatMap(lines).filter((line) => !printed.includes(line))).toEqual([]);
+    // The first part says what the skill is and lists its files; a later part says neither again.
+    expect(parts[0]).toContain("Description: A skill of many included files.");
+    expect(parts[0]).toContain("Supporting files, readable with skillcdn file:");
+    for (const part of parts.slice(1)) {
+      expect(part).toMatch(/^Skill: big\nSource: /);
+      expect(part).not.toContain("Description:");
+      expect(part).not.toContain("Supporting files");
+    }
+    for (const part of parts) {
+      // A file is under its name only in the parts that have some of it, and a section the part
+      // cuts says so in the command's word for what comes next.
+      expect(part).not.toMatch(/--- included file: \S+ ---\n(?:\(Continues|\n|$)/);
+      expect(part).not.toContain("page.)");
+    }
+    expect(
+      parts.slice(0, -1).some((part) => part.includes("\n(Continues in the next part.)")),
+    ).toBe(true);
     // A cursor of another commit, or of nothing, is refused as a misuse.
     const stale = await run([
       "skill",

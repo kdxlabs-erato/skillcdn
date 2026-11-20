@@ -62,8 +62,14 @@ export const OUTPUT_CHARS = 28_000;
 /** The characters of a file one read prints unless a limit says otherwise: within {@link OUTPUT_CHARS} with its header and links. */
 export const FILE_PAGE_CHARS = 24_000;
 
-/** How many pages of a data read are joined before the read stops: far above what a pack holds. */
+/** How many pages of a data read, or of the listing, are joined before the read stops: far above what a pack holds. */
 const MAX_DATA_PAGES = 10_000;
+/** How many pages of one skill a read follows before it stops, as the client's `skillPages` does: far above what one holds. */
+const MAX_SKILL_PAGES = 256;
+
+/** A word of a command line an agent is given to run: quoted where a shell would split or expand it. */
+export const shellWord = (word: string): string =>
+  /^[\w@%+=:,./~-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 
 /** One read of a pack, as a command asks for it. */
 export type PackRead =
@@ -167,7 +173,7 @@ async function listing(pack: Pack, summary: MountSummary): Promise<FindResult> {
   const items: FindItem[] = [];
   let first: FindResult | undefined;
   let cursor: string | undefined;
-  for (;;) {
+  for (let pages = 0; pages < MAX_DATA_PAGES; pages += 1) {
     const body = await pack.find({ cursor, limit: FIND_MAX_LIMIT });
     if (body.status !== "ready") {
       throw notReady(body.status);
@@ -175,11 +181,20 @@ async function listing(pack: Pack, summary: MountSummary): Promise<FindResult> {
     const result = findResultOf(body, summary);
     first ??= result;
     items.push(...result.items);
-    cursor = result.nextCursor;
-    if (cursor === undefined) {
+    if (result.nextCursor === undefined) {
       return { ...first, items, nextCursor: undefined };
     }
+    // A pack that answers the page it was just asked for again would be read without end.
+    if (result.nextCursor === cursor) {
+      break;
+    }
+    cursor = result.nextCursor;
   }
+  throw new PackError(
+    0,
+    "invalid_response",
+    "The pack answers more pages of its listing than one read takes.",
+  );
 }
 
 /**
@@ -226,7 +241,7 @@ async function skillFrom(
 ): Promise<SkillResult> {
   const pages: SkillResult[] = [];
   let cursor = from;
-  for (;;) {
+  for (let read = 0; read < MAX_SKILL_PAGES; read += 1) {
     const body = await pack.skill(path, cursor).catch(async (error: unknown) => {
       if (error instanceof PackError && error.code === "skill.not_found") {
         throw await notFound(pack, summary, path, words);
@@ -256,11 +271,48 @@ async function skillFrom(
       return part;
     }
     pages.push(page);
-    cursor = page.nextCursor;
-    if (page.complete || cursor === undefined) {
+    if (page.complete || page.nextCursor === undefined) {
       return joined;
     }
+    // A pack that answers the page it was just asked for again would be read without end.
+    if (page.nextCursor === cursor) {
+      break;
+    }
+    cursor = page.nextCursor;
   }
+  throw new PackError(
+    0,
+    "invalid_response",
+    "The skill did not complete within the pages one read takes.",
+  );
+}
+
+/**
+ * A part as it is printed (ADR-0113). One that is not the whole skill leaves out the included
+ * files it has nothing of: those before it, and those the next parts bring. One read from a cursor
+ * says the facts of the skill no second time, as a page after the first over MCP does not: the
+ * description, the license and the lists of files and references were in the first part.
+ */
+function printed(part: SkillResult, continued: boolean): SkillResult {
+  if (!continued && part.complete) {
+    return part;
+  }
+  const included = part.included.filter((file) => file.content !== "");
+  return continued
+    ? {
+        ...part,
+        description: "",
+        license: undefined,
+        compatibility: undefined,
+        allowedTools: undefined,
+        metadata: {},
+        files: [],
+        filesTruncated: false,
+        references: [],
+        referencesTruncated: false,
+        included,
+      }
+    : { ...part, included };
 }
 
 /**
@@ -348,27 +400,27 @@ export async function readPack(
 ): Promise<ReadOutput> {
   const words = options.words ?? COMMAND_WORDS;
   const json = options.json === true;
-  const mount = await pack.mount();
-  const summary = mountSummaryOf(mount);
+  // The mount is asked for by the reads that print from it: where the pack is and at which
+  // commit, for the text an agent is given. The API's JSON and the data reads need none of it.
+  const summarized = async (): Promise<MountSummary> => mountSummaryOf(await pack.mount());
   switch (read.read) {
     case "skills": {
+      const mount = await pack.mount();
       if (json) {
         return { text: asJson(mount) };
       }
       return {
-        text: `${renderInstructions(catalogStateOf(mount), words)}\n\n${renderFindResult(await listing(pack, summary), words)}`,
+        text: `${renderInstructions(catalogStateOf(mount), words)}\n\n${renderFindResult(await listing(pack, mountSummaryOf(mount)), words)}`,
       };
     }
     case "browse": {
-      const body = await pack.browse({
-        path: read.path,
-        cursor: read.cursor,
-        limit: readNumber(read.limit, "limit", BROWSE_MAX_LIMIT),
-      });
+      const limit = readNumber(read.limit, "limit", BROWSE_MAX_LIMIT);
+      const summary = json ? undefined : await summarized();
+      const body = await pack.browse({ path: read.path, cursor: read.cursor, limit });
       if (body.status !== "ready") {
         throw notReady(body.status);
       }
-      if (json) {
+      if (summary === undefined) {
         return { text: asJson(body) };
       }
       const result = browseResultOf(body, summary);
@@ -386,26 +438,35 @@ export async function readPack(
       if (query.length === 0) {
         throw new ReadMisuse("Say the words to find.");
       }
-      const body = await pack.find({
-        query,
-        path: read.path,
-        cursor: read.cursor,
-        limit: readNumber(read.limit, "limit", FIND_MAX_LIMIT),
-      });
+      const limit = readNumber(read.limit, "limit", FIND_MAX_LIMIT);
+      const summary = json ? undefined : await summarized();
+      const body = await pack.find({ query, path: read.path, cursor: read.cursor, limit });
       if (body.status !== "ready") {
         throw notReady(body.status);
       }
-      return { text: json ? asJson(body) : renderFindResult(findResultOf(body, summary), words) };
+      return {
+        text:
+          summary === undefined
+            ? asJson(body)
+            : renderFindResult(findResultOf(body, summary), words),
+      };
     }
     case "skill": {
+      const summary = await summarized();
       if (json) {
         const whole = await skillFrom(pack, summary, read.path, read.cursor, words);
         const outcome = skillOutcome({ status: "ready", lookup: { kind: "found", skill: whole } });
         return { text: asJson("body" in outcome ? outcome.body : outcome.failure) };
       }
+      // A section the part cuts continues in the next part, in the caller's word for one or ours.
+      const said: ToolWords = { ...words, piece: words.piece ?? "part" };
+      const continued = read.cursor !== undefined;
+      const render = (part: SkillResult): string =>
+        renderSkillResult(printed(part, continued), said);
       // The part ends with the line that says how to read on, which the bound counts as well.
       const nextPart =
-        options.nextPart ?? ((cursor: string) => `${words.load} ${read.path} --cursor ${cursor}`);
+        options.nextPart ??
+        ((cursor: string) => `${words.load} ${shellWord(read.path)} --cursor ${shellWord(cursor)}`);
       const lineOf = (part: SkillResult): string =>
         part.complete || part.nextCursor === undefined
           ? ""
@@ -416,21 +477,18 @@ export async function readPack(
         read.path,
         read.cursor,
         words,
-        (candidate) =>
-          renderSkillResult(candidate, words).length + lineOf(candidate).length <= OUTPUT_CHARS,
+        (candidate) => render(candidate).length + lineOf(candidate).length <= OUTPUT_CHARS,
       );
-      return { text: `${renderSkillResult(part, words)}${lineOf(part)}` };
+      return { text: `${render(part)}${lineOf(part)}` };
     }
     case "file": {
       const asked = readNumber(read.limit, "limit", READ_FILE_MAX_LIMIT);
       // A page for an agent stays within what its host shows whole; the JSON is the API's page.
       const limit = asked ?? (json ? undefined : FILE_PAGE_CHARS);
-      const body = await pack.file({
-        path: read.path,
-        offset: readNumber(read.offset, "offset", Number.MAX_SAFE_INTEGER),
-        limit,
-      });
-      if (json) {
+      const offset = readNumber(read.offset, "offset", Number.MAX_SAFE_INTEGER);
+      const summary = json ? undefined : await summarized();
+      const body = await pack.file({ path: read.path, offset, limit });
+      if (summary === undefined) {
         return { text: asJson(body) };
       }
       if (body.kind === "directory") {
