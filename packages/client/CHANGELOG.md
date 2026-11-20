@@ -1,5 +1,12 @@
 # @skillcdn/client
 
+## 0.5.3
+
+### Patch Changes
+
+- Updated dependencies [[`a042163`](https://github.com/skillcdn/skillcdn/commit/a04216367ec8390a6ebbddf3a55b6a7c29b45f09), [`f86a5db`](https://github.com/skillcdn/skillcdn/commit/f86a5db7a720cdb458dd69bf160e414c934c6094), [`616989e`](https://github.com/skillcdn/skillcdn/commit/616989ea3b6793001ad841ee35a0207ad967c434)]:
+  - @skillcdn/core@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes

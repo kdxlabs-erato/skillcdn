@@ -1,5 +1,14 @@
 # @skillcdn/serve
 
+## 0.5.3
+
+### Patch Changes
+
+- [`7d386cf`](https://github.com/skillcdn/skillcdn/commit/7d386cf10e15d0675a8bb70a1806956eeb8397eb) Thanks [@dependabot[bot]](https://github.com/dependabot%5Bbot%5D)! - Requires the releases of its HTTP framework that carry security fixes: `hono` 4.13.18 and `@hono/node-server` 2.1.8 at least. The fixes are in helpers the package does not use itself: the validator, the body limit, `mount` with a `getPath` of its own, and the static file middleware with `allowPercentInPath`. An application that puts `registerAddressRoutes` on a Hono app of its own and uses one of them gets the fix with the update. `@hono/node-server` 2.1.8 also cancels the body of a response whose client has already disconnected. Nothing changes in how `skillcdn serve` and the library are used.
+- Updated dependencies [[`a042163`](https://github.com/skillcdn/skillcdn/commit/a04216367ec8390a6ebbddf3a55b6a7c29b45f09), [`f86a5db`](https://github.com/skillcdn/skillcdn/commit/f86a5db7a720cdb458dd69bf160e414c934c6094), [`616989e`](https://github.com/skillcdn/skillcdn/commit/616989ea3b6793001ad841ee35a0207ad967c434)]:
+  - @skillcdn/core@0.5.3
+  - @skillcdn/reader@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes

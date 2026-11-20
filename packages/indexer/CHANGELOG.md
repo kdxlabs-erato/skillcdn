@@ -1,5 +1,19 @@
 # @skillcdn/indexer
 
+## 0.5.3
+
+### Patch Changes
+
+- [`a042163`](https://github.com/skillcdn/skillcdn/commit/a04216367ec8390a6ebbddf3a55b6a7c29b45f09) Thanks [@samo-lucid](https://github.com/samo-lucid)! - A search in words finds the page a name joined by capitals heads. `BerthAssigned` was one word, so "berth assigned" found nothing of the page with that title. Where a name names something, in the name and title of an entry, the words of its path and the headings of its body, the words it is joined of are now words beside it (`berth`, `assigned`; `XMLReader` gives `xml` and `reader`, `Base64Encode` gives `base64` and `encode`). The body and a query are read as before: a name asked for matches whole.
+  
+  The reading rules are at version 19 (`INDEX_VERSION`): a deployment rebuilds the index of each commit when it is next asked for and serves the one it has until then; the vectors of the sections are kept. `searchLexemes` takes a third argument, `names`, and a `SearchField` may say `names: true`.
+
+- [`616989e`](https://github.com/skillcdn/skillcdn/commit/616989ea3b6793001ad841ee35a0207ad967c434) Thanks [@samo-lucid](https://github.com/samo-lucid)! - The instructions of a connection keep a line for every folder while its path fits. Before, the folder lines were written whole until one did not fit in the 2,000 characters, and that folder and every one after it were left out without a word. Now the descriptions are cut to one length for all the folders, then left out, then the names, so that a pack that grows loses words before it loses folders; where the paths and counts alone do not fit, a line says how many folders are not listed. A pack whose lines fit is told as before.
+  
+  `skillcdn check` says beside the length of the instructions when the folder lines say less or some are left out. `@skillcdn/core` exports `fitInstructions`, which answers the text with what became of the rows, `catalogGroups` and `holdsSomething`; a catalog may carry `groupCount`, and the `mounts` answer of the REST API carries it as `index.groupCount`.
+- Updated dependencies [[`a042163`](https://github.com/skillcdn/skillcdn/commit/a04216367ec8390a6ebbddf3a55b6a7c29b45f09), [`f86a5db`](https://github.com/skillcdn/skillcdn/commit/f86a5db7a720cdb458dd69bf160e414c934c6094), [`616989e`](https://github.com/skillcdn/skillcdn/commit/616989ea3b6793001ad841ee35a0207ad967c434)]:
+  - @skillcdn/core@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes

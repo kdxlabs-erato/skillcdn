@@ -1,5 +1,19 @@
 # @skillcdn/web
 
+## 0.5.3
+
+### Patch Changes
+
+- [`ba20e73`](https://github.com/skillcdn/skillcdn/commit/ba20e732cb9b208fae65fe519b2d397a4839b496) Thanks [@samo-lucid](https://github.com/samo-lucid)! - `skillcdn use` says whether the `.skillcdn.json` it wrote is committed, before anything commits it: it is, so that every clone reads the same pack, unless the repository is public and the file names a deployment of your own or a private pack, which the organization keeps to itself; such a file goes in `.gitignore`, and each clone runs `skillcdn use` once. The command's help, its README and the guide on using skills say the same.
+
+- [`d108017`](https://github.com/skillcdn/skillcdn/commit/d1080173e8b399f27493226247bb649478b5074b) Thanks [@dependabot[bot]](https://github.com/dependabot%5Bbot%5D)! - Asks for `@vitejs/plugin-react` 6.3.0 at least as its peer: the release the pages are built and tested with. An installation that holds an older 6 updates it together with the package. Nothing changes in the pages or in how `skillcdn-web build` is used.
+
+- [`cf48c31`](https://github.com/skillcdn/skillcdn/commit/cf48c31228ec62e3e82453ec3a0c6790fae9d03e) Thanks [@dependabot[bot]](https://github.com/dependabot%5Bbot%5D)! - Asks for `vite` 8.3.8 at least as its peer: the release the pages are built and tested with. An installation that holds an older Vite 8 updates it together with the package. Nothing changes in the pages or in how `skillcdn-web build` is used.
+- Updated dependencies [[`a042163`](https://github.com/skillcdn/skillcdn/commit/a04216367ec8390a6ebbddf3a55b6a7c29b45f09), [`f86a5db`](https://github.com/skillcdn/skillcdn/commit/f86a5db7a720cdb458dd69bf160e414c934c6094), [`616989e`](https://github.com/skillcdn/skillcdn/commit/616989ea3b6793001ad841ee35a0207ad967c434)]:
+  - @skillcdn/core@0.5.3
+  - @skillcdn/brand@0.5.3
+  - @skillcdn/client@0.5.3
+
 ## 0.5.2
 
 ### Patch Changes
