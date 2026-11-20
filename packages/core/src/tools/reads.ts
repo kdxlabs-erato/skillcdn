@@ -115,6 +115,8 @@ export interface MountManifest {
 export interface MountOverview {
   readonly overview?: FolderOverview;
   readonly groups?: readonly BrowseEntry[];
+  /** How many folders of the mount hold a skill or a document, `groups` being the first of its folders. */
+  readonly groupCount?: number;
   readonly mount: MountSummary;
   readonly manifest: MountManifest | undefined;
   /** The license that governs the mounted directory outside its skills (ADR-0026). */

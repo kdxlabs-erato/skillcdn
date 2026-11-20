@@ -348,6 +348,9 @@ export function mountBody(
               ...entry,
               ...licensing({ license, describedOnly }),
             })),
+            ...(answer.overview.groupCount === undefined
+              ? {}
+              : { groupCount: answer.overview.groupCount }),
           },
   };
 }

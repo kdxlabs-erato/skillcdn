@@ -314,6 +314,11 @@ export const restMountSchema = z.object({
       documents: z.array(restDocumentSummarySchema),
       diagnostics: z.array(restDiagnosticSchema),
       groups: z.optional(z.array(restBrowseEntrySchema)),
+      /**
+       * How many folders of the mount hold a skill or a document, `groups` being the first 50 of
+       * its folders (ADR-0112). Absent from an answer of a deployment older than the field.
+       */
+      groupCount: z.optional(count),
       /** Absent from an answer of a deployment older than the field. */
       search: z.optional(restMountSearchSchema),
     }),

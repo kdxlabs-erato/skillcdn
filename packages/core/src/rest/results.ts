@@ -168,6 +168,7 @@ export function catalogStateOf(mount: RestMount): CatalogState {
       documentCount: mount.index.documentCount,
       diagnostics: diagnosticsOf(mount.index.diagnostics),
       ...(mount.index.groups === undefined ? {} : { groups: entriesOf(mount.index.groups) }),
+      ...(mount.index.groupCount === undefined ? {} : { groupCount: mount.index.groupCount }),
       ...(mount.index.search === undefined
         ? {}
         : {

@@ -85,6 +85,7 @@ const overview: MountOverview = {
       browsePath: path("marketing"),
     },
   ],
+  groupCount: 61,
   mount,
   manifest: {
     path: path("SKILLCDN.md"),
@@ -156,6 +157,10 @@ describe("the mounts body", () => {
       { name: "ads", directory: path("marketing/ads"), description: "Writes ads." },
     ]);
     expect(state.catalog.groups).toEqual(overview.groups);
+    // The count of the folders travels with the first of them, for the line that says how many
+    // the instructions do not list (ADR-0112).
+    expect(state.catalog.groupCount).toBe(61);
+    expect(renderInstructions(state)).toContain("\n60 more folders are not listed here.\n");
     expect(state.catalog.diagnostics).toEqual(overview.diagnostics);
     expect(renderInstructions(state)).toContain("Acme skills: The skills of Acme.");
   });

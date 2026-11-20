@@ -7,6 +7,7 @@ import {
   type CatalogFile,
   type CatalogState,
   type CodeResult,
+  catalogGroups,
   classifyRepoFile,
   contextPage,
   DATA_CODE_DEFAULT_LIMIT,
@@ -40,6 +41,7 @@ import {
   frontMatterObject,
   fuseRanks,
   headingPaths,
+  holdsSomething,
   type IncludedFile,
   type IndexDiagnostic,
   type IndexEntry,
@@ -1130,7 +1132,7 @@ export class Reader<M extends MountContext = MountContext> {
         return {
           overview: await this.#overviewOf(index, path),
           description: mount.description,
-          groups: (await this.#browseEntries(index, path)).slice(0, BROWSE_DEFAULT_LIMIT),
+          ...catalogGroups(await this.#browseEntries(index, path), BROWSE_DEFAULT_LIMIT),
           manifest:
             manifest === undefined
               ? undefined
@@ -2436,6 +2438,7 @@ export class Reader<M extends MountContext = MountContext> {
       this.#browseEntries(index, path),
     ]);
     const counts = countEntries(entries, path);
+    const folders = groups.filter((entry) => entry.kind === "directory");
     const skills = listEntries(entries, path, listLimit, "skills");
     const documents = listEntries(entries, path, listLimit, "documents_outside_skills");
     const search = await this.#searchOf(index);
@@ -2445,7 +2448,8 @@ export class Reader<M extends MountContext = MountContext> {
         overview: await this.#overviewOf(index, path),
         ...(search === undefined ? {} : { search }),
         mount: this.summary(mount, index),
-        groups: groups.filter((entry) => entry.kind === "directory").slice(0, BROWSE_DEFAULT_LIMIT),
+        groups: folders.slice(0, BROWSE_DEFAULT_LIMIT),
+        groupCount: folders.filter(holdsSomething).length,
         manifest,
         license: await this.#licenseAt(index, path),
         skillCount: counts.skills,

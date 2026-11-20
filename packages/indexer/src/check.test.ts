@@ -128,6 +128,28 @@ describe("checking a working tree", () => {
     expect(connection).not.toContain("team/README.md:");
   });
 
+  it("says what the bound of the instructions cost the folders (ADR-0112)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "skillcdn-check-room-"));
+    const description = "Releases, incidents and the reviews after them, for whoever is on call. ";
+    for (let index = 0; index < 14; index += 1) {
+      const area = join(root, `area-${String(index).padStart(2, "0")}`);
+      await mkdir(join(area, "act"), { recursive: true });
+      await writeFile(join(area, "README.md"), `# Area ${index}\n\n${description.repeat(2)}\n`);
+      await writeFile(
+        join(area, "act", "SKILL.md"),
+        `---\nname: act-${index}\ndescription: Acts for area ${index}.\n---\nAct.\n`,
+      );
+    }
+    const { code, report } = await check(root);
+    expect(code).toBe(0);
+    expect(report).toMatch(
+      /What a client is told on connect \(\d+ of 2000 characters; the folder lines say less, to fit\):/,
+    );
+    const connection = report.split("What a client is told on connect")[1];
+    expect(connection).toContain("area-13/: Area 13. Releases, incidents");
+    expect(connection).not.toContain("not listed here");
+  });
+
   it("shows folder metadata on connect and distinguishes published support from linked references", async () => {
     const root = await mkdtemp(join(tmpdir(), "skillcdn-check-tree-"));
     const files = {

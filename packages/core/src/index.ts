@@ -618,9 +618,13 @@ export {
   type CatalogSkill,
   type CatalogState,
   catalogDescription,
+  catalogGroups,
   describeFindTool,
   FIND_DESCRIPTION_MAX_LENGTH,
+  fitInstructions,
+  holdsSomething,
   INSTRUCTIONS_MAX_LENGTH,
+  type InstructionsFit,
   type MountCatalog,
   renderInstructions,
 } from "./tools/catalog.js";

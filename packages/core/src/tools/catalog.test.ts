@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parseRepoPath, type RepoPath } from "../repo-path.js";
 import {
+  catalogGroups,
   describeFindTool,
   FIND_DESCRIPTION_MAX_LENGTH,
+  fitInstructions,
   INSTRUCTIONS_MAX_LENGTH,
   type MountCatalog,
   renderInstructions,
@@ -216,6 +218,123 @@ describe("repository instructions", () => {
     expect(text).toContain("browse_repo returns the full folder contents");
     expect(text).toContain("until complete");
     expect(text).toContain("Written in ko");
+    // Not one path fits: the text says so instead of reading as a pack without folders.
+    expect(text).toContain("\n300 folders are not listed here.\n");
+  });
+
+  describe("folders that do not fit whole (ADR-0112)", () => {
+    const areas = (count: number, description: string | null): BrowseEntry[] =>
+      Array.from({ length: count }, (_, index) => ({
+        ...folder(`area-${String(index).padStart(3, "0")}`),
+        description,
+      }));
+    const told = (groups: BrowseEntry[]) =>
+      fitInstructions({ status: "ready", catalog: { ...base, groups, skillCount: 128 } });
+    const long = `${"Releases, incidents and the reviews after them. ".repeat(3)}End.`;
+
+    it("says them whole while there is room, and says so", () => {
+      const fit = told(areas(6, long));
+      expect(fit).toMatchObject({ rows: 6, listed: 6, shortened: false });
+      expect(fit.text).toContain(`area-005/: Team skills. ${long.slice(0, 99)}… 128 skills`);
+    });
+
+    it("cuts the descriptions alike, so that every folder keeps its line", () => {
+      const groups = [...areas(12, long), { ...folder("brief"), description: "Short and whole." }];
+      const fit = told(groups);
+      expect(fit).toMatchObject({ rows: 13, listed: 13, shortened: true });
+      expect(fit.text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_LENGTH);
+      const lines = fit.text.split("\n").filter((line) => line.startsWith("area-"));
+      expect(lines).toHaveLength(12);
+      // One length for all of them, shorter than a description is with room, and the counts stay.
+      expect(new Set(lines.map((line) => line.length)).size).toBe(1);
+      expect(lines[0]).toMatch(/^area-000\/: Team skills\. Releases, .+… 128 skills, 2 documents$/);
+      expect(lines[0]?.length).toBeLessThan(`area-000/: Team skills. ${long}`.length);
+      expect(fit.text).toContain("brief/: Team skills. Short and whole. 128 skills, 2 documents\n");
+      expect(fit.text).not.toContain("not listed here");
+    });
+
+    it("leaves the descriptions out, then the names, before it leaves a folder out", () => {
+      const named = told(areas(24, long));
+      expect(named).toMatchObject({ rows: 24, listed: 24, shortened: true });
+      expect(named.text).toContain("area-023/: Team skills. 128 skills, 2 documents\n");
+      expect(named.text).not.toContain("Releases");
+
+      const bare = told(areas(36, long));
+      expect(bare).toMatchObject({ rows: 36, listed: 36, shortened: true });
+      expect(bare.text).toContain("area-035/: 128 skills, 2 documents\n");
+      expect(bare.text).not.toContain("Team skills");
+      expect(bare.text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_LENGTH);
+    });
+
+    it("says how many folders it could not name, when not even their paths fit", () => {
+      const fit = told(areas(120, long));
+      expect(fit.rows).toBe(120);
+      expect(fit.listed).toBeGreaterThan(20);
+      expect(fit.listed).toBeLessThan(120);
+      expect(fit.text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_LENGTH);
+      expect(fit.text.split("\n").filter((line) => line.startsWith("area-"))).toHaveLength(
+        fit.listed,
+      );
+      expect(fit.text).toContain(
+        `\n${120 - fit.listed} more folders are not listed here.\nbrowse_repo returns the full folder contents`,
+      );
+    });
+
+    it("counts skills where skills are the rows", () => {
+      const skills = Array.from({ length: 200 }, (_, index) => ({
+        name: `skill-${index}`,
+        directory: path(`skills/skill-${index}`),
+        description: "Does one thing.",
+      }));
+      const fit = fitInstructions({
+        status: "ready",
+        catalog: { ...base, skills, skillCount: 200 },
+      });
+      expect(fit.listed).toBeLessThan(200);
+      expect(fit.text).toContain(`\n${200 - fit.listed} more skills are not listed here.\n`);
+      expect(fit.text).toContain("skills/skill-0/SKILL.md\n");
+      expect(fit.text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_LENGTH);
+    });
+
+    it("counts the folders the catalog was not given, where it was given the first of them", () => {
+      const fit = fitInstructions({
+        status: "ready",
+        catalog: {
+          ...base,
+          ...catalogGroups(
+            [
+              { ...folder(".hidden"), skillCount: 0, documentCount: 0 },
+              ...areas(70, null).map((area) => ({
+                ...area,
+                name: null,
+                skillCount: 1,
+                documentCount: 0,
+              })),
+            ],
+            50,
+          ),
+          skillCount: 70,
+        },
+      });
+      // Fifty paths with their counts fit; the twenty the catalog only counts are said.
+      expect(fit).toMatchObject({ rows: 70, listed: 50 });
+      expect(fit.text).toContain("area-049/: 1 skill\n20 more folders are not listed here.\n");
+      expect(fit.text).not.toContain(".hidden");
+      expect(fit.text.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_LENGTH);
+
+      // A catalog made from an older answer has no count: what it was given is all it knows of.
+      const uncounted = told(areas(6, null));
+      expect(uncounted).toMatchObject({ rows: 6, listed: 6 });
+      expect(uncounted.text).not.toContain("not listed here");
+    });
+
+    it("has nothing to say of rows before the commit is read", () => {
+      expect(fitInstructions({ status: "indexing", mount })).toMatchObject({
+        rows: 0,
+        listed: 0,
+        shortened: false,
+      });
+    });
   });
   it("uses exact entrypoint paths to distinguish duplicate names", () => {
     const text = renderInstructions({

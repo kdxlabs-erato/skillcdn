@@ -5,9 +5,11 @@ import {
   BROWSE_DEFAULT_LIMIT,
   browseCatalogFiles,
   type CatalogFile,
+  catalogGroups,
   classifyRepoFile,
   describeLicense,
   FIND_LIST_SKILLS_MAX,
+  fitInstructions,
   folderOverview,
   INSTRUCTIONS_MAX_LENGTH,
   type IndexDiagnostic,
@@ -19,7 +21,6 @@ import {
   READ_FILE_DEFAULT_LIMIT,
   type RepoPath,
   ROOT_PATH,
-  renderInstructions,
   sectionsOf,
   skillUriPrefix,
   splitFrontMatter,
@@ -286,7 +287,7 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
 
   const catalog: MountCatalog = {
     overview,
-    groups: browseCatalogFiles(catalogFiles, ROOT_PATH).slice(0, BROWSE_DEFAULT_LIMIT),
+    ...catalogGroups(browseCatalogFiles(catalogFiles, ROOT_PATH), BROWSE_DEFAULT_LIMIT),
     mount: {
       repository: basename(root),
       ref: undefined,
@@ -315,9 +316,17 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
     documentCount: documents.length,
     diagnostics,
   };
-  const instructions = renderInstructions({ status: "ready", catalog });
+  const told = fitInstructions({ status: "ready", catalog });
+  const instructions = told.text;
+  // What the bound cost the folders (ADR-0112): an author sees it here before a client does.
+  const cost =
+    told.listed < told.rows
+      ? `; ${told.rows - told.listed} of ${told.rows} folder lines are left out, for want of room`
+      : told.shortened
+        ? "; the folder lines say less, to fit"
+        : "";
   write(
-    `What a client is told on connect (${instructions.length} of ${INSTRUCTIONS_MAX_LENGTH} characters):\n` +
+    `What a client is told on connect (${instructions.length} of ${INSTRUCTIONS_MAX_LENGTH} characters${cost}):\n` +
       `${instructions
         .split("\n")
         .map((line) => `  ${line}`)
