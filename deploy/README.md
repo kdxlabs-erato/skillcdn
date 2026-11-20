@@ -64,9 +64,20 @@ The overlays set `EMBEDDINGS_URL`, `EMBEDDINGS_MODEL`, `EMBEDDINGS_SCOPE` (`publ
 
 At run time the bundle reaches nothing outside the host but the git host the packs come from, which may be a GitHub Enterprise Server inside the network (`GITHUB_API_URL`), or no git host at all, with the packs in a directory of the host ([below](#packs-from-a-directory-of-the-deployment)). To install where there is no internet:
 
-1. Where there is, from a checkout at the release: `deploy/bundle.sh --platform linux/amd64 --models "base" skillcdn-bundle`. [`bundle.sh`](bundle.sh) pulls the image of the release, the database's and, with `--models`, the inference server's (`--gpu` for the one for NVIDIA GPUs), saves them into one archive, fetches the model files of the profiles named and checks their digests, copies these files, and writes `SHA256SUMS` over everything and `VERSION` with what it took along. `--image` with `--no-pull` takes an image the host built instead. Nothing of an installation goes into it: no settings, no secret, no pack.
+1. Where there is, from a checkout at the release: `deploy/bundle.sh --platform linux/amd64 --models "base" skillcdn-bundle`. [`bundle.sh`](bundle.sh) pulls the image of the release, the database's and, with `--models`, the inference server's (`--gpu` for the one for NVIDIA GPUs), saves them into one archive, fetches the model files of the profiles named and checks their digests, copies these files, and writes `SHA256SUMS` over everything and `VERSION` with what it took along. `--image` with `--no-pull` takes an image the host built instead. No settings and no secret go into it.
 2. Carry the directory over, by whatever the installation admits, and on the host: `./install.sh --offline --packs /srv/packs`, with `--meaning` when the bundle has models. It checks every file against `SHA256SUMS` and installs nothing when one differs, loads the images, and brings the bundle up without pulling anything. The packs are the installation's own: copy them into the directory, `<owner>/<name>` each, and the worker finds and indexes them within a minute or two ([the worker](#the-worker)).
 3. Keep the bundle with the installation, as what it runs: an update is the bundle of the new release and the same command. Keep the model files with the installation as you keep the images. A change of model is a change of configuration and a backfill ([the worker](#the-worker)), never a file swapped under a running server; the vectors are keyed by the model's name, so a file replaced in place under the same name would be searched by the vectors of another model.
+
+Whoever makes bundles for installations of their own, an organization's packs with a service beside the server, adds to the product's bundle instead of making another ([ADR-0115](../docs/adr/0115-a-bundle-carries-what-its-maker-adds-under-the-same-digests.md)). Each of these may be given as many times as there are:
+
+| `bundle.sh` | What goes along | What `install.sh` does with it |
+|---|---|---|
+| `--packs DIR` | The packs of the directory, `<owner>/<name>` each, without their `.git` | Serves them from the bundle where the installation names no directory, as `/local/<owner>/<name>`; with `--packs DIR`, or a `PACKS_PATH` set before, puts each into that directory where no pack of its name is yet. A pack that is there is the installation's and is left: remove it and run the script again to take the bundle's. |
+| `--add-image REF` | Another image, in the same archive | Loads it with the others. |
+| `--overlay FILE` | A compose file of yours, named `compose.<name>.yaml`, beside the bundle's | Lays it over the bundle's own, last, and keeps it on at every run: the services it adds come up with the rest. |
+| `--add PATH` | A file or a directory beside these files: what the overlay mounts, a manual | Checks it against the digests like every file. |
+
+`VERSION` names the overlays and says that packs came along, and `SHA256SUMS` covers every file, so an installation checks what you added as it checks the product. A file named `.env` among what you add is refused: the settings of an installation are made on its host. `install.sh --with compose.<name>.yaml` turns on an overlay that stands beside the script without a bundle having named it, and an overlay turned on stays on at every later run.
 
 ## Environment contract
 
@@ -463,7 +474,7 @@ For whoever changes `deploy/` or `.github/`: read the root [`AGENTS.md`](../AGEN
 - **Workflows:** pin every action to a full commit hash with the version in a comment, declare minimal `permissions`, never use `pull_request_target`, never echo secrets, and pass untrusted values (branch names, PR titles) through `env`, not inline in `run`.
 - **CI needs no secrets**, so it is safe on pull requests from forks. Keep it that way.
 - **Compose files are for development and self-hosting.** Bind ports to `127.0.0.1`; label throwaway credentials as such.
-- **The scripts take no secret and print none.** `install.sh` makes the secrets an installation needs and writes them to its settings file; `bundle.sh` puts nothing of an installation's own into a bundle. A script that travels to a host without internet runs on what that host has: bash, docker and coreutils, nothing fetched.
+- **The scripts take no secret and print none.** `install.sh` makes the secrets an installation needs and writes them to its settings file; `bundle.sh` puts no settings and no secret into a bundle, and refuses a `.env` among what its maker adds (ADR-0115). A script that travels to a host without internet runs on what that host has: bash, docker and coreutils, nothing fetched.
 - **Verify what you change.** Build the image and run the smoke test locally (`docker build -f deploy/Dockerfile .`), and bring compose changes up and down once. A workflow edit you could not run must say so in the commit message.
 - Keep `deploy/README.md` in step: the environment table, how to build a release and the rollout contract are read by whoever operates the service.
 

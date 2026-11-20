@@ -16,8 +16,20 @@
 #   --gpu             the inference server's image for NVIDIA GPUs instead
 #   --no-pull         take the images this host has, and fetch none
 #
-# The directory is ./skillcdn-bundle unless named. Nothing of an installation's own goes into a
-# bundle: no settings, no secret, no pack.
+# What you add to the product for the installations you make (ADR-0115), each as many times as
+# there are:
+#
+#   --packs DIR       the packs of DIR, <owner>/<name> each, without their .git: install.sh
+#                     serves them, or puts them into the directory the installation serves
+#   --add-image REF   another image to take along: what an overlay of yours runs
+#   --overlay FILE    a compose file of yours, compose.<name>.yaml, laid over the bundle's:
+#                     install.sh turns it on
+#   --add PATH        a file or a directory of yours to take along beside these files: what an
+#                     overlay mounts, a manual
+#
+# The directory is ./skillcdn-bundle unless named. No settings and no secret go into a bundle:
+# a file named .env among what you add is refused. What you add is named in VERSION and is under
+# the digests like everything else.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -30,6 +42,10 @@ models=""
 gpu=false
 pull=true
 out=""
+packs=()
+more_images=()
+overlays=()
+adds=()
 
 fail() {
   echo "bundle: $*" >&2
@@ -43,7 +59,11 @@ while [ $# -gt 0 ]; do
     --models) [ $# -ge 2 ] || fail "--models takes the profiles, in one argument"; models=$2; shift 2 ;;
     --gpu) gpu=true; shift ;;
     --no-pull) pull=false; shift ;;
-    -h | --help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --packs) [ $# -ge 2 ] || fail "--packs takes a directory"; packs+=("$2"); shift 2 ;;
+    --add-image) [ $# -ge 2 ] || fail "--add-image takes an image reference"; more_images+=("$2"); shift 2 ;;
+    --overlay) [ $# -ge 2 ] || fail "--overlay takes a compose file"; overlays+=("$2"); shift 2 ;;
+    --add) [ $# -ge 2 ] || fail "--add takes a file or a directory"; adds+=("$2"); shift 2 ;;
+    -h | --help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) fail "unknown option: $1 (see --help)" ;;
     *) [ -z "$out" ] || fail "one directory, not two: $1"; out=$1; shift ;;
   esac
@@ -58,6 +78,35 @@ release=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$here/../packages/cli/packag
 image=${image:-$registry_image:$release}
 out=${out:-skillcdn-bundle}
 [ ! -e "$out" ] || fail "$out is there already; name another directory, or remove it"
+
+# What the maker adds is checked before anything is fetched or written.
+own="compose.yaml compose.packs.yaml compose.meaning.yaml compose.rerank.yaml compose.gpu.yaml"
+taken="$own install.sh get-models.sh README.md .env.example LICENSE.md THIRD-PARTY-NOTICES.md TRADEMARKS.md VERSION SHA256SUMS images models packs"
+for dir in ${packs[@]+"${packs[@]}"}; do
+  [ -d "$dir" ] || fail "--packs names no directory: $dir"
+  [ -z "$(find "$dir" -name .git -prune -o -name .env -print | head -n 1)" ] ||
+    fail "a pack of $dir holds a settings file (.env); a bundle carries no settings and no secret"
+done
+for file in ${overlays[@]+"${overlays[@]}"}; do
+  [ -f "$file" ] || fail "--overlay names no file: $file"
+  name=$(basename "$file")
+  case "$name" in
+    compose.*.yaml) ;;
+    *) fail "an overlay is named compose.<name>.yaml, so that it stands beside the bundle's: $name" ;;
+  esac
+  case " $own " in *" $name "*) fail "$name is a file of the bundle; name your overlay otherwise" ;; esac
+  taken="$taken $name"
+done
+for path in ${adds[@]+"${adds[@]}"}; do
+  [ -e "$path" ] || fail "--add names nothing: $path"
+  name=$(basename "$path")
+  case " $taken " in *" $name "*) fail "$name is in the bundle already; name what you add otherwise" ;; esac
+  taken="$taken $name"
+  # The settings of an installation are made on its host: none travels, and no secret with them.
+  if [ "$name" = .env ] || [ -n "$(find "$path" -name .env -print 2>/dev/null | head -n 1)" ]; then
+    fail "$path holds a settings file (.env); a bundle carries no settings and no secret"
+  fi
+done
 
 inference_image=""
 if [ -n "$models" ] || $gpu; then
@@ -79,7 +128,22 @@ cp "$here/../.env.example" "$out/.env.example"
 cp "$here/../LICENSE.md" "$here/../THIRD-PARTY-NOTICES.md" "$here/../TRADEMARKS.md" "$out/"
 chmod +x "$out/install.sh" "$out/get-models.sh"
 
-images="$image $database_image $inference_image"
+# What the maker adds: the packs without their histories, the overlays beside the bundle's
+# compose files, and the files they need.
+for dir in ${packs[@]+"${packs[@]}"}; do
+  mkdir -p "$out/packs"
+  (cd "$dir" && tar -cf - --exclude=.git .) | (cd "$out/packs" && tar -xf -)
+done
+overlay_names=""
+for file in ${overlays[@]+"${overlays[@]}"}; do
+  cp "$file" "$out/"
+  overlay_names="${overlay_names:+$overlay_names:}$(basename "$file")"
+done
+for path in ${adds[@]+"${adds[@]}"}; do
+  cp -R "$path" "$out/"
+done
+
+images="$image $database_image $inference_image ${more_images[*]-}"
 for ref in $images; do
   if $pull; then
     echo "pulling $ref"
@@ -97,6 +161,9 @@ docker save $images | gzip >"$out/images/images.tar.gz"
 {
   echo "version=$release"
   echo "image=$image"
+  # The overlays of the maker, which install.sh turns on, and whether packs came along.
+  [ -z "$overlay_names" ] || echo "overlays=$overlay_names"
+  [ ! -d "$out/packs" ] || echo "packs=packs"
   for ref in $images; do
     echo "# $ref $(docker image inspect --format '{{.Id}} {{join .RepoDigests " "}}' "$ref")"
   done

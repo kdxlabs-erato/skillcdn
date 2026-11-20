@@ -18,6 +18,8 @@
 #   --gpu          both on an NVIDIA GPU; implies --rerank
 #   --offline      reach nothing outside this host: load the images kept beside this script,
 #                  check every file against the bundle's digests, and never pull
+#   --with FILE    a compose file of your own beside this script, laid over the bundle's; what
+#                  a bundle was made with (bundle.sh --overlay) is on without it
 #   --no-start     write the settings and stop
 #
 # It reads no secret from its arguments and takes none: the database password, the admin token
@@ -39,6 +41,7 @@ rerank=false
 gpu=false
 offline=false
 start=true
+with=()
 
 fail() {
   echo "install: $*" >&2
@@ -57,8 +60,9 @@ while [ $# -gt 0 ]; do
     --rerank) meaning=true; rerank=true; shift ;;
     --gpu) meaning=true; rerank=true; gpu=true; shift ;;
     --offline) offline=true; shift ;;
+    --with) [ $# -ge 2 ] || fail "--with takes a compose file"; with+=("$2"); shift 2 ;;
     --no-start) start=false; shift ;;
-    -h | --help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail "unknown option: $1 (see --help)" ;;
   esac
 done
@@ -169,11 +173,35 @@ if [ -n "$packs" ]; then
   [ -d "$packs" ] || fail "--packs names no directory: $packs"
   set_setting PACKS_PATH "$(cd "$packs" && pwd)"
 fi
-if [ -n "$(setting PACKS_PATH)" ]; then
+# The packs a bundle carries (bundle.sh --packs, ADR-0115): served from the bundle, ./packs
+# beside this script, where the installation names no directory of its own, else put into that
+# directory, each where no pack of its name is yet. A pack that is there is the installation's
+# and is never replaced here.
+served=$(setting PACKS_PATH)
+if [ -f "$here/VERSION" ] && [ -d "$here/packs" ]; then
+  if [ -z "$served" ]; then
+    # No setting is written: the overlay looks beside the script, in whatever bundle that is.
+    served=$here/packs
+  else
+    for pack in "$here"/packs/*/*/; do
+      [ -d "$pack" ] || continue
+      pack=${pack%/}
+      name=${pack#"$here/packs/"}
+      if [ -e "$served/$name" ]; then
+        echo "keeping the pack $name of $served; remove it and run this again to take the bundle's"
+      else
+        mkdir -p "$served/$(dirname "$name")"
+        cp -R "$pack" "$served/$name"
+        echo "put the pack $name into $served"
+      fi
+    done
+  fi
+fi
+if [ -n "$served" ]; then
   files=$files:compose.packs.yaml
 fi
 if $private; then
-  [ -n "$(setting PACKS_PATH)" ] || fail "--private is about the packs of a directory: name one with --packs"
+  [ -n "$served" ] || fail "--private is about the packs of a directory: name one with --packs"
   set_setting PACKS_ACCESS token
 fi
 # What was turned on before stays on: the overlays are read back from the settings.
@@ -200,6 +228,26 @@ if $meaning && [ "$(setting PACKS_ACCESS)" = token ] && [ -z "$(setting EMBEDDIN
 fi
 if $rerank; then files=$files:compose.rerank.yaml; fi
 if $gpu; then files=$files:compose.gpu.yaml; fi
+# The overlays of whoever made the bundle or installs it, laid over the bundle's own, last: the
+# ones the bundle names, the ones turned on before, and the ones named now.
+own=""
+[ ! -f "$here/VERSION" ] || own=$(sed -n 's/^overlays=//p' "$here/VERSION")
+own=$own:$before
+for file in ${with[@]+"${with[@]}"}; do
+  own=$own:$file
+done
+old_ifs=$IFS
+IFS=:
+for file in $own; do
+  case ":$files:" in *":$file:"*) continue ;; esac
+  case "$file" in
+    "" | compose.yaml | compose.packs.yaml | compose.meaning.yaml | compose.rerank.yaml | compose.gpu.yaml) continue ;;
+    */* | *:*) IFS=$old_ifs; fail "an overlay is a compose file beside this script, by its name: $file" ;;
+  esac
+  [ -f "$here/$file" ] || { IFS=$old_ifs; fail "there is no $file beside this script"; }
+  files=$files:$file
+done
+IFS=$old_ifs
 # Read by compose from this file, so that `docker compose` in this directory means the bundle
 # as it was installed, overlays included.
 set_setting COMPOSE_PATH_SEPARATOR ":"
@@ -233,7 +281,7 @@ $ready || fail "the server did not become ready; see: (cd $here && docker compos
 
 echo
 echo "SkillCDN ${release:+$release }is running at http://127.0.0.1:$listening (image $image)."
-[ -z "$(setting PACKS_PATH)" ] || echo "Packs: a directory <owner>/<name> under $(setting PACKS_PATH) is served at /local/<owner>/<name>."
+[ -z "$served" ] || echo "Packs: a directory <owner>/<name> under $served is served at /local/<owner>/<name>."
 [ "$(setting PACKS_ACCESS)" != token ] || echo "They are read with a token only: make one per agent with POST /admin/v1/pack-tokens (deploy/README.md)."
 echo "Settings and secrets: $env_file. The admin API takes the ADMIN_TOKEN written there."
 echo "Put TLS in front before anything but this host reaches it (deploy/README.md, \"Behind a reverse proxy\")."
