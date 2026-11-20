@@ -68,7 +68,7 @@ The context is the body of the document the skills extension serves for the skil
 2. The skill's own body, under `--- instructions ---`.
 3. Files declared in `skillcdn.include`, in declaration order, each under `--- included file: <path> ---`; a shared page outside the skill directory arrives here too, under its repository-root path ([format](skill-repo.md#shared-pages)).
 
-The front matter of the document is not repeated as YAML; its fields are the header lines of the result (`Skill`, `Description`, `License`, `Compatibility`, `Allowed tools`, `Metadata`). The `License` line names the license the reader resolved for the skill and where it found it, which may be a file rather than the field ([licenses](skill-repo.md#licenses)).
+The front matter of the document is not repeated as YAML; its fields are the header lines of the result (`Skill`, `Description`, `License`, `Compatibility`, `Allowed tools`, `Metadata`). The `License` line names the license the reader resolved for the skill and where it found it, which may be a file rather than the field ([licenses](skill-repo.md#licenses)). A page after the first names the skill and its source and says none of the other header lines again.
 
 A skill whose license keeps its content at the source is **described only** ([licenses](skill-repo.md#licenses)): the result has the header lines, a `Described only:` line with a link to the skill's manifest at its host, and no rules, body, files or references; the [REST](rest.md) result says the same in `serving`. A verified repository's default branch is served in full.
 

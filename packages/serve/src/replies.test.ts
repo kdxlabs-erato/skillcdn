@@ -96,4 +96,29 @@ describe("MCP context projections", () => {
     expect(result.content[0]?.text).not.toContain("abbreviated");
     expect(result.content[0]?.text).not.toContain("Supporting files");
   });
+
+  it("says the license of a skill on its first page, and no second time on a later one", () => {
+    const license = { kind: "permissive", name: "MIT", source: "LICENSE" as RepoPath } as const;
+    const sourceUrl = "https://git.example/acme/skills/blob/abc/skills/write/SKILL.md";
+    const served = skill({ license: "MIT", serving: { license, full: true, sourceUrl } });
+    expect(skillReply(served).content[0]?.text).toContain("\nLicense: MIT (LICENSE)\n");
+    const later = skillReply(served, true).content[0]?.text ?? "";
+    expect(later).toContain("Skill: write\nSource: ");
+    expect(later).toContain("Required instructions.");
+    expect(later).not.toContain("License:");
+    // A skill that is only described says why whatever was asked: the license is the reason.
+    const described = skillReply(
+      skill({
+        body: "",
+        serving: {
+          license: { kind: "restrictive", name: "FSL-1.1-ALv2", source: "LICENSE" as RepoPath },
+          full: false,
+          sourceUrl,
+        },
+      }),
+      true,
+    );
+    expect(described.content[0]?.text).toContain("License: FSL-1.1-ALv2 (LICENSE)");
+    expect(described.content[0]?.text).toContain("Described only:");
+  });
 });

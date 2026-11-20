@@ -302,12 +302,15 @@ describe("the reads of a directory", () => {
     // A part ends after a line (ADR-0113): every line of every file is printed whole.
     const printed = parts.join("\n");
     expect(files.flatMap(lines).filter((line) => !printed.includes(line))).toEqual([]);
-    // The first part says what the skill is and lists its files; a later part says neither again.
+    // The first part says what the skill is, its license and its files; a later part says none of
+    // them again.
     expect(parts[0]).toContain("Description: A skill of many included files.");
+    expect(parts[0]).toContain("\nLicense: MIT (LICENSE)\n");
     expect(parts[0]).toContain("Supporting files, readable with skillcdn file:");
     for (const part of parts.slice(1)) {
       expect(part).toMatch(/^Skill: big\nSource: /);
       expect(part).not.toContain("Description:");
+      expect(part).not.toContain("License:");
       expect(part).not.toContain("Supporting files");
     }
     for (const part of parts) {

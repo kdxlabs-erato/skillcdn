@@ -189,6 +189,9 @@ export function skillReply(result: SkillResult, continuation = false): ToolReply
     referencesTruncated: !continuation && references.length > shownReferences.length,
     included: result.included.filter((file) => file.content !== ""),
     warnings: shownWarnings,
+    // The license line is written from the serving decision. A skill that is only described
+    // keeps it on every answer: it is why nothing else follows.
+    serving: continuation && result.serving?.full === true ? undefined : result.serving,
   };
   return reply(renderSkillResult(data));
 }

@@ -311,6 +311,9 @@ function printed(part: SkillResult, continued: boolean): SkillResult {
         references: [],
         referencesTruncated: false,
         included,
+        // The license line is written from the serving decision; a skill that is only described
+        // keeps it, since it is why nothing else follows.
+        serving: part.serving?.full === true ? undefined : part.serving,
       }
     : { ...part, included };
 }
