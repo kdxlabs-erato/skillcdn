@@ -6,7 +6,9 @@ name: Release
 # trusted publishing: no stored token, a short-lived identity the publish job proves, and a
 # provenance attestation on every published version. The image of the release follows, built
 # from the same commit and pushed to this repository's own container registry with the token of
-# its job (ADR-0087): no stored secret there either, and nothing of any deployment.
+# its job (ADR-0087): no stored secret there either, and nothing of any deployment. Each platform
+# is built on a runner of its own, and a release the registry has no image of is given it by the
+# next run (ADR-0116).
 
 on:
   push:
@@ -119,62 +121,151 @@ jobs:
         env:
           npm_config_provenance: "true"
 
-  image:
-    name: Publish the image
+  # The image of the release (ADR-0087, ADR-0116), in three jobs. They run after the publish where
+  # there was one, and on every other push as well: the first asks which release this commit is
+  # of, whether its packages are published and whether the registry has its image. So a release
+  # that lost its image to a failed job is given it by the next push, built from the commit of
+  # the release and not from the one pushed.
+  image-plan:
+    name: Which image is missing
     needs: [mode, publish]
-    if: needs.mode.outputs.mode == 'publish'
+    # A job that needs a skipped one is skipped unless it says what it waits for, and so is every
+    # job after it: each of the three says so. A fork publishes no image.
+    if: ${{ !cancelled() && !github.event.repository.fork && needs.mode.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 10
     permissions:
       contents: read
-      packages: write # the image, in this repository's own container registry
+      packages: read # whether the registry has the image
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      version: ${{ steps.plan.outputs.version }}
+      commit: ${{ steps.plan.outputs.commit }}
     env:
       IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: The release this commit is
-        id: release
-        run: |
-          version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' packages/cli/package.json | head -n 1)
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Sign in to the registry with the token of this job
         env:
           TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
         run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
-      # A version the registry has is never built again: a tag means one image for good.
-      - name: Whether the registry has this release
-        id: have
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
+      - name: The release this commit is of, and whether its image is to be built
+        id: plan
         run: |
-          if docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' packages/cli/package.json | head -n 1)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # The tag the publish job makes says the packages of this version are published, and
+          # names the commit they were published from. Without it there is no release yet.
+          tag="refs/tags/@skillcdn/cli@$version"
+          commit=$(git ls-remote origin "$tag" "$tag^{}" | tail -n 1 | cut -f 1)
+          if [ -z "$commit" ]; then
+            echo "The packages of $version are not published: there is no image to build."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        if: steps.have.outputs.exists == 'false'
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          # A version the registry has is never built again: a tag means one image for good. So
+          # only the registry saying that it has none starts a build; anything else it says, or
+          # no answer, fails here.
+          if found=$(docker buildx imagetools inspect "$IMAGE:$version" 2>&1); then
+            echo "The registry has the image of $version."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          elif grep -qiE "not found|manifest unknown" <<< "$found"; then
+            echo "The registry has no image of $version: it is built from $commit."
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$found"
+            exit 1
+          fi
+
+  # Each platform on a runner of its own, so nothing is built under emulation, and pushed without
+  # a name: the release is named by the job after this one, once both are there.
+  image-build:
+    name: Build the image (${{ matrix.arch }})
+    needs: image-plan
+    if: ${{ !cancelled() && needs.image-plan.result == 'success' && needs.image-plan.outputs.build == 'true' }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # the image, in this repository's own container registry
+    # One output per platform: a job of a matrix gives the outputs of all its runs together.
+    outputs:
+      amd64: ${{ steps.pushed.outputs.amd64 }}
+      arm64: ${{ steps.pushed.outputs.arm64 }}
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          platforms: arm64
+          ref: ${{ needs.image-plan.outputs.commit }}
+          persist-credentials: false
+      - name: Sign in to the registry with the token of this job
+        env:
+          TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        if: steps.have.outputs.exists == 'false'
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        if: steps.have.outputs.exists == 'false'
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: deploy/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ steps.release.outputs.version }}
-            ${{ env.IMAGE }}:latest
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           labels: |
-            org.opencontainers.image.version=${{ steps.release.outputs.version }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.image-plan.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.image-plan.outputs.commit }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha
+      - name: What was pushed
+        id: pushed
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "$ARCH=$DIGEST" >> "$GITHUB_OUTPUT"
+
+  image:
+    name: Publish the image
+    needs: [image-plan, image-build]
+    if: ${{ !cancelled() && needs.image-plan.result == 'success' && needs.image-build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      packages: write # the names of the image, in this repository's own container registry
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - name: Sign in to the registry with the token of this job
+        env:
+          TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+      # The one step that names anything, and it names both platforms at once, each with its
+      # provenance and its list of contents: a tag never means an image of one platform.
+      - name: Name the image of both platforms
+        env:
+          VERSION: ${{ needs.image-plan.outputs.version }}
+          AMD64: ${{ needs.image-build.outputs.amd64 }}
+          ARM64: ${{ needs.image-build.outputs.arm64 }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$AMD64" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$ARM64" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools create --tag "$IMAGE:$VERSION" --tag "$IMAGE:latest" "$IMAGE@$AMD64" "$IMAGE@$ARM64"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
