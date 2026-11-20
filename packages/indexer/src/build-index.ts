@@ -93,8 +93,10 @@ import { gitBlobHash, sha256Hex } from "./git-hash.js";
  * 17 was on `main` alone, for a declaration that was taken out again (ADR-0089), and is not used
  * again, so that an index written under that 17 is rebuilt.
  * 18: a name written with underscores is a word of the vector beside its parts (ADR-0100).
+ * 19: a name joined by capitals, in a name, a title, a path or a heading, is a word of the vector
+ *     beside the words it is joined of (ADR-0114).
  */
-export const INDEX_VERSION = 18;
+export const INDEX_VERSION = 19;
 
 /**
  * The lowest version of the reading rules whose index is still served while the commit is

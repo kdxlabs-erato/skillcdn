@@ -66,6 +66,97 @@ describe("searchLexemes", () => {
     expect(queryLexemes("docs/my_file")).toEqual(["docs/my", "doc", "file"]);
   });
 
+  it("reads a name joined by capitals by its words as well, where names are read (ADR-0114)", () => {
+    const named = (text: string): string[] =>
+      searchLexemes(text, undefined, true).map((lexeme) => lexeme.lexeme);
+    const parts = (text: string): string[] =>
+      searchLexemes(text, undefined, true)
+        .filter((lexeme) => lexeme.part === true)
+        .map((lexeme) => lexeme.lexeme);
+    // The name whole, as before, then the words it is joined of, stemmed and without stop words.
+    expect(named("BerthAssigned")).toEqual(["berthassign", "berth", "assign"]);
+    expect(parts("AllowPilotToReorderBerths")).toEqual(["allow", "pilot", "reorder", "berth"]);
+    // A dotted chain keeps what a dot joins, and each of its names is read for its capitals.
+    expect(named("HarborLogView.BerthAssigned event")).toEqual([
+      "harborlogview.berthassigned",
+      "harborlogview",
+      "berthassign",
+      "harbor",
+      "log",
+      "view",
+      "berth",
+      "assign",
+      "event",
+    ]);
+    // A run of capitals is one word, digits stay with the word before them, and a part of one
+    // letter or of digits alone is none.
+    expect(parts("XMLReader getHTTPResponse IOError")).toEqual([
+      "xml",
+      "reader",
+      "get",
+      "http",
+      "respons",
+      "io",
+      "error",
+    ]);
+    expect(parts("Base64Encode Utf8JsonReader X509Certificate HTTP2Server")).toEqual([
+      "base64",
+      "encod",
+      "utf8",
+      "json",
+      "reader",
+      "x509",
+      "certif",
+      "http2",
+      "server",
+    ]);
+    expect(parts("iPhone macOS IPv6Address maxRetryCount")).toEqual([
+      "phone",
+      "mac",
+      "os",
+      "pv6",
+      "address",
+      "max",
+      "retri",
+      "count",
+    ]);
+    // Names joined by an underscore or a hyphen as well are read by both rules.
+    expect(parts("maxRetry_count get-userName")).toEqual(["max", "retri", "user", "name"]);
+    // What capitals join nothing in: a word, a capitalized word, a word in capitals, a code.
+    for (const plain of [
+      "release",
+      "Release",
+      "RELEASE",
+      "E214",
+      "A1B2",
+      "HTTP2",
+      "x86_64",
+      "v2",
+    ]) {
+      expect(parts(plain), plain).toEqual([]);
+    }
+    // Other scripts have no capitals, and a name with one of their letters is left as it is.
+    expect(parts("서돌Code 蒼陵Reader")).toEqual([]);
+    // A text is read for its names only when asked: a body and a query are not.
+    expect(searchLexemes("BerthAssigned").map((lexeme) => lexeme.lexeme)).toEqual(["berthassign"]);
+    expect(queryLexemes("HarborLogView BerthAssigned")).toEqual(["harborlogview", "berthassign"]);
+  });
+
+  it("reads no capitals where small letters take more room, and bounds what it reads", () => {
+    const named = (text: string): number =>
+      searchLexemes(text, undefined, true).filter((lexeme) => lexeme.part === true).length;
+    // A capital whose small letter is two characters moves every place after it: nothing is read
+    // for capitals in such a text, and the words are as they were.
+    const dotted = `${String.fromCodePoint(0x130)}stanbul BerthAssigned`;
+    expect(dotted.toLowerCase().length).not.toBe(dotted.length);
+    expect(named(dotted)).toBe(0);
+    expect(searchLexemes(dotted, undefined, true).length).toBe(searchLexemes(dotted).length);
+    // A run longer than any name, 128 characters, is not read for its capitals, whatever it holds.
+    expect(named("aB".repeat(64))).toBe(63);
+    expect(named("aB".repeat(65))).toBe(0);
+    expect(named("Ab".repeat(100_000))).toBe(0);
+  });
+
   it("keeps a code whole beside its parts, in one script or across scripts (ADR-0069)", () => {
     expect(queryLexemes("Form MMCC-3 and OIW-PV-120")).toEqual([
       "form",

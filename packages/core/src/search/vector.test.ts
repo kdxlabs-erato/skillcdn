@@ -39,12 +39,42 @@ describe("searchFieldsOf", () => {
       },
       "# Ads\n\nThe body.",
     );
+    // The name with the title, and the path with the headings, are where things are named.
     expect(fields).toEqual([
-      { weight: "A", text: "ads " },
+      { weight: "A", text: "ads ", names: true },
       { weight: "B", text: "Writes ad copy." },
-      { weight: "C", text: "marketing ads SKILL md" },
+      { weight: "C", text: "marketing ads SKILL md", names: true },
       { weight: "D", text: "# Ads\n\nThe body." },
     ]);
+  });
+
+  it("finds a name joined by capitals by its words where it is a title or a heading (ADR-0114)", () => {
+    const body = "Occurs when the log has one more. See TideGaugePanel for layout.";
+    const event = searchVectorOf(
+      searchFieldsOf({ path: "api/Log.md", title: "HarborLogView.BerthAssigned Event" }, body, [
+        "HarborLogView.BerthAssigned Event",
+      ]),
+    );
+    // The name is found whole, as before, and by the words it is joined of, at the title's weight.
+    expect(event.get("berthassign")?.[0]?.weight).toBe("A");
+    for (const word of ["berth", "assign", "harbor", "log", "view"]) {
+      expect(event.get(word)?.[0]?.weight, word).toBe("A");
+    }
+    // A name in the body is a word of the body alone: its words are in too many bodies to say
+    // which document is meant.
+    expect(event.has("tidegaugepanel")).toBe(true);
+    expect(event.has("panel")).toBe(false);
+    // Asked in words, the page that names the event outranks one that only speaks of berths.
+    const other = searchVectorOf(
+      searchFieldsOf({ path: "api/Quay.md", title: "Quay" }, "A berth is assigned at the quay.", [
+        "Quay",
+      ]),
+    );
+    const query = queryLexemes("berth assigned");
+    expect(query).toEqual(["berth", "assign"]);
+    expect(rankSearchVector(event, query)).toBeGreaterThan(rankSearchVector(other, query));
+    // Asked by its name, the name is one word: the query is not read for its capitals.
+    expect(queryLexemes("BerthAssigned")).toEqual(["berthassign"]);
   });
 
   it("weighs the headings of the body with the words of the path, above the body", () => {
@@ -53,7 +83,11 @@ describe("searchFieldsOf", () => {
       "# Faults\n\nText.",
       ["Faults", "Fault code E214/070"],
     );
-    expect(fields[2]).toEqual({ weight: "C", text: "docs faults md Faults Fault code E214/070" });
+    expect(fields[2]).toEqual({
+      weight: "C",
+      text: "docs faults md Faults Fault code E214/070",
+      names: true,
+    });
     // The code in a heading outranks the same code in a table of a document as short.
     const headed = searchVectorOf(
       searchFieldsOf({ path: "docs/a.md" }, "## Fault code E214/070\n\nThe fault.", [

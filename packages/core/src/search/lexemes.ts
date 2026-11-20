@@ -18,6 +18,8 @@ export interface Lexeme {
   readonly lexeme: string;
   /** Counted from 1 over every token cut, the dropped stop words included. */
   readonly position: number;
+  /** True for a word a name is joined of by capitals, read where names are (ADR-0114). */
+  readonly part?: boolean;
 }
 
 /** How the words of one language are read: its stemmer and its stop words. */
@@ -102,6 +104,42 @@ const NAME = /^[\p{L}\p{N}]+(?:_[\p{L}\p{N}]+)+$/u;
 interface Token {
   readonly text: string;
   readonly stem: boolean;
+  /** A word a name is joined of by capitals, read where names are (ADR-0114). */
+  readonly part?: boolean;
+}
+
+/** What a name joined by capitals is made of: letters that have a case, and digits. */
+const CASED = /^[\p{Lu}\p{Ll}\p{N}]+$/u;
+/**
+ * Where capitals join two words: a small letter before a capital (`berthAssigned`), a run of capitals
+ * before a capitalized word (`XMLReader`), and a digit before one (`Base64Encode`). A word in
+ * capitals, a capitalized word and a code of capitals and digits have none.
+ */
+const CAPITAL_JOINT = /\p{Ll}\p{Lu}|[\p{Lu}\p{N}]\p{Lu}\p{Ll}/u;
+/** The words between the joints, each with the digits that follow it: `XML`, `Reader`, `Utf8`. */
+const CAPITAL_PARTS = /\p{Lu}+(?=\p{Lu}\p{Ll})\p{N}*|\p{Lu}?\p{Ll}+\p{N}*|\p{Lu}+\p{N}*|\p{N}+/gu;
+/** No name is longer; a longer run of letters is not read for its capitals. */
+const MAX_NAME_LENGTH = 128;
+
+/**
+ * The words the names of a run are joined of by capitals, in order: `BerthAssigned` is `berth`
+ * and `assigned`, and `HarborLogView.BerthAssigned` the five words of its two names (ADR-0114).
+ * `run` is as it was written, before it was put in small letters. A part of one letter or of
+ * digits alone says nothing and is left out.
+ */
+function capitalParts(run: string): Token[] {
+  const tokens: Token[] = [];
+  for (const name of run.split(/[^\p{L}\p{N}]+/u)) {
+    if (name.length > MAX_NAME_LENGTH || !CASED.test(name) || !CAPITAL_JOINT.test(name)) {
+      continue;
+    }
+    for (const [part] of name.matchAll(CAPITAL_PARTS)) {
+      if (part.length > 1 && !DIGITS.test(part)) {
+        tokens.push({ ...wordToken(part.toLowerCase()), part: true });
+      }
+    }
+  }
+  return tokens;
 }
 
 function wordToken(text: string): Token {
@@ -281,9 +319,13 @@ export function utf8Length(text: string): number {
   return bytes;
 }
 
-function tokensOf(text: string): Token[] {
+function tokensOf(text: string, names: boolean): Token[] {
   const tokens: Token[] = [];
-  for (const match of text.toLowerCase().matchAll(TOKENS)) {
+  const lower = text.toLowerCase();
+  // The capitals are read from the text as written, at the place of each run in it: where small
+  // letters take more room than the capitals they stand for, the places differ and none is read.
+  const written = names && lower.length === text.length ? text : undefined;
+  for (const match of lower.matchAll(TOKENS)) {
     const [whole, host, path] = match;
     if (host !== undefined) {
       // A URL: the host with its path, the host, and the path, when there is one. A host of dots
@@ -309,6 +351,12 @@ function tokensOf(text: string): Token[] {
     for (const token of tokensOfScripts(whole)) {
       tokens.push(token);
     }
+    if (written !== undefined) {
+      // After the run's own words, as the parts of a name written with underscores follow it.
+      for (const token of capitalParts(written.slice(match.index, match.index + whole.length))) {
+        tokens.push(token);
+      }
+    }
   }
   return tokens.filter(
     (token) => token.text.length <= SHORT_ENOUGH || utf8Length(token.text) <= MAX_LEXEME_BYTES,
@@ -319,12 +367,16 @@ function tokensOf(text: string): Token[] {
  * The lexemes of a text, as an index holds them: every token at its position, the stop words of
  * the language dropped, its words stemmed, everything else kept as written, and the scripts
  * without word stems as pairs of characters. `language` is the pack's; English when not said.
+ *
+ * With `names`, the text is one that names things, a title or a heading: a name joined by
+ * capitals is then a word beside the words it is joined of, each marked as a `part` (ADR-0114).
+ * A query and a body are read without, so that a name asked for is matched whole.
  */
-export function searchLexemes(text: string, language?: string): Lexeme[] {
+export function searchLexemes(text: string, language?: string, names = false): Lexeme[] {
   const rules = wordRulesOf(language);
   const lexemes: Lexeme[] = [];
   let position = 0;
-  for (const token of tokensOf(text)) {
+  for (const token of tokensOf(text, names)) {
     position += 1;
     if (token.stem && rules.stopWords.has(token.text)) {
       continue;
@@ -334,7 +386,7 @@ export function searchLexemes(text: string, language?: string): Lexeme[] {
     if (lexeme.length === 0) {
       continue;
     }
-    lexemes.push({ lexeme, position });
+    lexemes.push(token.part === true ? { lexeme, position, part: true } : { lexeme, position });
   }
   return lexemes;
 }

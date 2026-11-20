@@ -55,6 +55,12 @@ export type SearchVector = ReadonlyMap<string, readonly SearchPosition[]>;
 export interface SearchField {
   readonly weight: SearchWeight;
   readonly text: string;
+  /**
+   * Whether the field names things: a name joined by capitals in it is then a word beside the
+   * words it is joined of, which weigh what the field weighs (ADR-0114). The body is not such a
+   * field.
+   */
+  readonly names?: boolean;
 }
 
 /** The largest position a vector keeps; later words are placed here. */
@@ -80,9 +86,13 @@ export function searchFieldsOf(
   headings: readonly string[] = [],
 ): SearchField[] {
   return [
-    { weight: "A", text: `${entry.name ?? ""} ${entry.title ?? ""}` },
+    { weight: "A", text: `${entry.name ?? ""} ${entry.title ?? ""}`, names: true },
     { weight: "B", text: entry.description ?? "" },
-    { weight: "C", text: [entry.path.replaceAll(/[/._-]/gu, " "), ...headings].join(" ") },
+    {
+      weight: "C",
+      text: [entry.path.replaceAll(/[/._-]/gu, " "), ...headings].join(" "),
+      names: true,
+    },
     { weight: "D", text: (body ?? "").slice(0, MAX_SEARCHED_BODY_LENGTH) },
   ];
 }
@@ -141,7 +151,7 @@ export function searchVectorOf(fields: readonly SearchField[], language?: string
   let offset = 0;
   for (const field of fields) {
     let last = 0;
-    for (const { lexeme, position } of searchLexemes(field.text, language)) {
+    for (const { lexeme, position } of searchLexemes(field.text, language, field.names === true)) {
       const at = Math.min(offset + position, MAX_POSITION);
       last = Math.max(last, position);
       let positions = vector.get(lexeme);

@@ -208,8 +208,8 @@ export function matchSections(
     const body = text.slice(section.offset, section.offset + section.length);
     const vector = searchVectorOf(
       [
-        { weight: "A", text: section.heading[section.heading.length - 1] ?? "" },
-        { weight: "C", text: section.heading.slice(0, -1).join(" ") },
+        { weight: "A", text: section.heading[section.heading.length - 1] ?? "", names: true },
+        { weight: "C", text: section.heading.slice(0, -1).join(" "), names: true },
         { weight: "D", text: body },
       ],
       options.language,
