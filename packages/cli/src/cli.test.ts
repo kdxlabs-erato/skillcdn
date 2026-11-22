@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { EXIT_CONFIG, EXIT_USAGE, runCli } from "./cli.js";
+import { EXIT_CONFIG, EXIT_USAGE, isLaterRelease, runCli } from "./cli.js";
 
 async function run(args: string[], environment: Record<string, string | undefined> = {}) {
   let out = "";
@@ -41,7 +41,10 @@ describe("the skillcdn command", () => {
     const { code, out, err } = await run(["check", root]);
     expect(code).toBe(0);
     expect(err).toBe("");
-    expect(out).toMatch(/as SkillCDN would index it \(reading rules version \d+\): 2 files/);
+    // The report says what wrote it: the command's version beside the rules it applied.
+    expect(out).toMatch(
+      /as SkillCDN would index it \(skillcdn \d+\.\d+\.\d+\S*, reading rules version \d+\): 2 files/,
+    );
     expect(out).toContain("Skills: 1");
     expect(out).toContain("- greeting (skills/greeting)");
     expect(out).toContain("Documents outside the skills: 1\n- docs/guide.md");
@@ -104,6 +107,79 @@ describe("the skillcdn command", () => {
     expect(misuse.code).toBe(EXIT_USAGE);
     expect(misuse.err).toContain("check takes one directory at most.");
     expect(misuse.err).toContain("usage: skillcdn check [<directory>]");
+  });
+
+  it("says beside the report of check that a later version is published, and asks nothing when told not to", async () => {
+    const root = await repository({ "skills/greeting/SKILL.md": skill("greeting", "Says hello.") });
+    const asked: string[] = [];
+    const checked = async (
+      answer: () => Promise<Response>,
+      args: string[] = [],
+      environment: Record<string, string | undefined> = {},
+    ) => {
+      let out = "";
+      let err = "";
+      const code = await runCli(["check", root, ...args], {
+        environment,
+        stdout: (text) => {
+          out += text;
+        },
+        stderr: (text) => {
+          err += text;
+        },
+        fetch: (input) => {
+          asked.push(input);
+          return answer();
+        },
+      });
+      return { code, out, err };
+    };
+    const latest = (version: string) => async () => Response.json({ latest: version });
+    const plain = await run(["check", root]);
+
+    const stale = await checked(latest("999.0.0"));
+    expect(stale.code).toBe(0);
+    // The report is the same with or without the answer: the line stands beside it.
+    expect(stale.out).toBe(plain.out);
+    expect(stale.err).toMatch(
+      /^skillcdn 999\.0\.0 is published, and this is \d+\.\d+\.\d+\S*: a later version may read a pack by later rules\. Run npx @skillcdn\/cli@latest check, or update the command that is installed\. --offline asks nothing\.\n$/,
+    );
+    expect(asked).toEqual(["https://registry.npmjs.org/-/package/@skillcdn%2Fcli/dist-tags"]);
+
+    // Nothing is said of the same version, an older one, or the placeholder a publish leaves.
+    for (const version of ["0.0.1", "0.0.0-stage", "not a version"]) {
+      expect((await checked(latest(version))).err).toBe("");
+    }
+    // No network, or a registry that does not answer as one, is not the check's affair.
+    const failures: (() => Promise<Response>)[] = [
+      async () => {
+        throw new TypeError("fetch failed");
+      },
+      async () => new Response("gone", { status: 503 }),
+      async () => new Response("<html>", { status: 200 }),
+      async () => Response.json(["latest"]),
+    ];
+    for (const failure of failures) {
+      const answered = await checked(failure);
+      expect(answered.code).toBe(0);
+      expect(answered.err).toBe("");
+      expect(answered.out).toBe(plain.out);
+    }
+
+    asked.length = 0;
+    expect((await checked(latest("999.0.0"), ["--offline"])).err).toBe("");
+    expect((await checked(latest("999.0.0"), [], { SKILLCDN_OFFLINE: "1" })).err).toBe("");
+    expect(asked).toEqual([]);
+  });
+
+  it("tells a later release from one that is not", () => {
+    expect(isLaterRelease("0.6.0", "0.5.3")).toBe(true);
+    expect(isLaterRelease("0.5.10", "0.5.9")).toBe(true);
+    expect(isLaterRelease("1.0.0", "0.99.99")).toBe(true);
+    expect(isLaterRelease("0.5.3", "0.5.3")).toBe(false);
+    expect(isLaterRelease("0.5.2", "0.5.3")).toBe(false);
+    expect(isLaterRelease("0.0.0-stage", "0.5.3")).toBe(false);
+    expect(isLaterRelease("0.6.0", "unknown")).toBe(false);
   });
 
   it("prints its help and its version", async () => {

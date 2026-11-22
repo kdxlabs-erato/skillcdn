@@ -123,7 +123,7 @@ On npm, under the `@skillcdn` scope, released together at one version, each with
 
 | Package | Version | What it is |
 |---|---|---|
-| [`@skillcdn/cli`](https://www.npmjs.com/package/@skillcdn/cli) | [![npm](https://img.shields.io/npm/v/@skillcdn/cli)](https://www.npmjs.com/package/@skillcdn/cli) | the `skillcdn` command: check a pack before pushing (`npx @skillcdn/cli check`), read one as an agent gets it over MCP, serve a directory over stdio or HTTP |
+| [`@skillcdn/cli`](https://www.npmjs.com/package/@skillcdn/cli) | [![npm](https://img.shields.io/npm/v/@skillcdn/cli)](https://www.npmjs.com/package/@skillcdn/cli) | the `skillcdn` command: check a pack before pushing (`npx @skillcdn/cli@latest check`), read one as an agent gets it over MCP, serve a directory over stdio or HTTP |
 | [`@skillcdn/serve`](https://www.npmjs.com/package/@skillcdn/serve) | [![npm](https://img.shields.io/npm/v/@skillcdn/serve)](https://www.npmjs.com/package/@skillcdn/serve) | the MCP tools, the prompt and the skills extension, and the REST routes of an address, as a library over a reader |
 | [`@skillcdn/client`](https://www.npmjs.com/package/@skillcdn/client) | [![npm](https://img.shields.io/npm/v/@skillcdn/client)](https://www.npmjs.com/package/@skillcdn/client) | the REST API as typed functions, for Node.js and the browser |
 | [`@skillcdn/reader`](https://www.npmjs.com/package/@skillcdn/reader) | [![npm](https://img.shields.io/npm/v/@skillcdn/reader)](https://www.npmjs.com/package/@skillcdn/reader) | the reads of a mount over an index, wherever the index is kept |

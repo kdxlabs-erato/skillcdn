@@ -155,7 +155,7 @@ A pack that is mostly documents is a **document pack** ([ADR-0063](../adr/0063-p
 
   The index holds every quotation against the section its link names, word for word once links are folded to their words and markup and blanks are folded away, and reports one that is not there (`quote_not_in_source`), a block quote with no such link (`quote_without_link`) and a `from` that names nothing (`derived_from_missing`); a source changed after the note was written is found the same way. A search result marks such a document, and an agent quotes the section, never the document made from it. The format asks for no such document: this is what the ones a pack holds owe the text they rest on.
 
-The method, the steps an agent follows to make such a pack and to work one, is the reference pack's: `skillcdn-document-pack` and `skillcdn-document-research` in [skillcdn/skills](https://github.com/skillcdn/skills), served at `skillcdn.ai/gh/skillcdn/skills`, and readable without a connection with `npx @skillcdn/cli skill gh/skillcdn/skills engineering/skills/skillcdn-document-pack/SKILL.md`. They follow this format and define nothing of it.
+The method, the steps an agent follows to make such a pack and to work one, is the reference pack's: `skillcdn-document-pack` and `skillcdn-document-research` in [skillcdn/skills](https://github.com/skillcdn/skills), served at `skillcdn.ai/gh/skillcdn/skills`, and readable without a connection with `npx @skillcdn/cli@latest skill gh/skillcdn/skills engineering/skills/skillcdn-document-pack/SKILL.md`. They follow this format and define nothing of it.
 
 ### A repository without a manifest
 
@@ -299,14 +299,16 @@ Nothing in that document moves with the commit: the same sources are the same by
 
 ## Checking a repository before pushing
 
-The `skillcdn check` command (`@skillcdn/cli` on npm) reads a directory as the indexer reads a commit, with the same code, the same parsers and the same limits, and prints what an agent would get, headed by the version of the reading rules it applied: the manifest, the repository's license, every skill with its files, warnings, its license, whether the skills extension lists it and in how many pages its context is read, the documents outside the skills with how many sections each has, linked references, what is not served, index diagnostics, and the instructions a client is told on connect. It needs no database and no git host, executes nothing from the directory, and exits with `1` when index diagnostics are present, so it can gate a push. The server image has the same code as its `check` role.
+The `skillcdn check` command (`@skillcdn/cli` on npm) reads a directory as the indexer reads a commit, with the same code, the same parsers and the same limits, and prints what an agent would get, headed by the command's version and the version of the reading rules it applied: the manifest, the repository's license, every skill with its files, warnings, its license, whether the skills extension lists it and in how many pages its context is read, the documents outside the skills with how many sections each has, linked references, what is not served, index diagnostics, and the instructions a client is told on connect. It needs no database and no git host, executes nothing from the directory, and exits with `1` when index diagnostics are present, so it can gate a push. The server image has the same code as its `check` role.
 
 ```sh
-npx @skillcdn/cli check                                        # the current directory
-pnpm dlx @skillcdn/cli check /path/to/repository
+npx @skillcdn/cli@latest check                                 # the current directory
+pnpm dlx @skillcdn/cli@latest check /path/to/repository
 node packages/cli/dist/bin.js check ../skills                  # from a checkout of this repository, after pnpm build
 docker run --rm -v "$PWD:/repo:ro" skillcdn check /repo        # from the image
 ```
+
+The commands name `@latest` because a runner goes on using the version it fetched first, and a command applies the reading rules it was built with: an older one reads a pack by older rules, and its first line is where that shows. When the npm registry has a later release of the command, `check` says so in a line on standard error, beside the report. That request is the only one it makes, never changes its exit code, and is left out with `--offline` or `SKILLCDN_OFFLINE=1`.
 
 The working-tree reader does not follow symbolic links and excludes repository administration and dependency directories. Hidden content otherwise follows the same declarations as indexing. It reads a working directory rather than a commit, so untracked or ignored files can make its report differ from what was pushed. Only the `INDEX_*` limits are read from the environment ([deploy](../../deploy/README.md)).
 

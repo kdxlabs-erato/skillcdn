@@ -38,7 +38,7 @@ An agent that runs commands can use a pack without an MCP connection: the `skill
 
 An agent that can run commands does the rest. By hand, it is the same three steps:
 
-1. **Install the command** where the agent runs: `npm install -g @skillcdn/cli` (Node.js 24 or newer), or `npx @skillcdn/cli <command>` for a run without installing.
+1. **Install the command** where the agent runs: `npm install -g @skillcdn/cli` (Node.js 24 or newer), or `npx @skillcdn/cli@latest <command>` for a run without installing.
 2. **Connect the project to the pack**: `skillcdn use gh/acme/skills` for a pack at a deployment, or `skillcdn use ../packs/acme` for a folder on the machine, read with no server and no network. It writes `.skillcdn.json`, which names the pack and nothing secret and is meant to be committed, so that every clone reads the same pack. In a public repository, a file that names a deployment of your own or a private pack goes in `.gitignore` instead, and each clone runs `skillcdn use` once.
 3. **Tell the agents.** Nothing tells an agent to look until the project says so: put the sentence the command prints into the project's agreement (`AGENTS.md`, or `CLAUDE.md` where that is the file your agents read), as it is; [the command's reference](../../packages/cli/README.md#a-private-pack-and-a-bound-directory) shows it.
 

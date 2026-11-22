@@ -233,11 +233,18 @@ search: { meaning: false } keeps its documents to the words. The text of the doc
 that server and nowhere else; a server that does not answer leaves the words to answer.`;
 
 const HELP: Readonly<Record<Command, string>> = {
-  check: `usage: skillcdn check [<directory>]
+  check: `usage: skillcdn check [<directory>] [--offline]
 
 Reads a directory as SkillCDN would index it and prints what an agent would get: the manifest,
-the license, every skill with its files and warnings, the documents, what is not served, the
-index diagnostics, and what a client is told on connect. Nothing in the directory is executed.
+the license, every skill with its files, its warnings and the pages it is read in, the
+documents, what is not served, the index diagnostics, and what a client is told on connect.
+Nothing in the directory is executed.
+
+The first line names this command's version and the version of the reading rules it applied.
+A command run from a cache or installed long ago applies the rules it was built with: when the
+npm registry has a later version, a line on standard error says so. That one request is all
+the network check uses, it never fails the check, and --offline (or SKILLCDN_OFFLINE=1) leaves
+it out. npx @skillcdn/cli@latest check always runs the latest.
 
 Exit codes: 0 when there are no index diagnostics, 1 when there are, 2 when the directory cannot
 be read. The INDEX_* and READ_MAX_FILE_BYTES variables set the limits a deployment would apply.
@@ -1488,10 +1495,64 @@ export async function runCli(args: readonly string[], io: CliIo): Promise<number
   }
 }
 
+/** Where the registry says which version of the command is the latest: one small document. */
+const LATEST_VERSION_URL = "https://registry.npmjs.org/-/package/@skillcdn%2Fcli/dist-tags";
+/** How long `check` waits for that answer after its report is written. */
+const LATEST_VERSION_WAIT_MS = 1_500;
+const RELEASE = /^(\d+)\.(\d+)\.(\d+)$/;
+
+/** Whether `candidate` is a later release than `current`; false for anything that is not a release. */
+export function isLaterRelease(candidate: string, current: string): boolean {
+  const later = RELEASE.exec(candidate);
+  const now = RELEASE.exec(current);
+  if (later === null || now === null) return false;
+  for (const at of [1, 2, 3]) {
+    const difference = Number(later[at]) - Number(now[at]);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
+}
+
+/**
+ * The latest version of the command at the registry when it is later than this one, and nothing
+ * otherwise: no network, an answer that is not one, a registry that takes too long. A command
+ * run from a cache or installed long ago reads a pack by the rules it was built with and has
+ * no other way to know that newer ones are out.
+ */
+async function laterVersion(io: CliIo, current: string): Promise<string | undefined> {
+  const fetchLike = io.fetch;
+  if (fetchLike === undefined) return undefined;
+  const asked = (async (): Promise<string | undefined> => {
+    try {
+      const response = await fetchLike(LATEST_VERSION_URL, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(LATEST_VERSION_WAIT_MS),
+      });
+      if (!response.ok) return undefined;
+      const tags: unknown = await response.json();
+      const latest =
+        typeof tags === "object" && tags !== null && "latest" in tags ? tags.latest : undefined;
+      return typeof latest === "string" && isLaterRelease(latest, current) ? latest : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  // A fetch that does not heed its signal must not hold the command either.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const waited = new Promise<undefined>((done) => {
+    timer = setTimeout(() => done(undefined), LATEST_VERSION_WAIT_MS);
+  });
+  try {
+    return await Promise.race([asked, waited]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function checkCommand(args: readonly string[], io: CliIo): Promise<number> {
   const parsed = parseArgs({
     args: [...args],
-    options: { help: { type: "boolean", short: "h" } },
+    options: { help: { type: "boolean", short: "h" }, offline: { type: "boolean" } },
     allowPositionals: true,
     strict: true,
   });
@@ -1503,11 +1564,25 @@ async function checkCommand(args: readonly string[], io: CliIo): Promise<number>
   if (rest.length > 0) {
     throw new Misuse("check takes one directory at most.");
   }
-  return await checkDirectory({
+  const current = version();
+  const offline =
+    parsed.values.offline === true || textOf(io.environment, "SKILLCDN_OFFLINE") !== undefined;
+  // Asked while the directory is read, so that the answer costs the check no time of its own.
+  const later = offline ? undefined : laterVersion(io, current);
+  const code = await checkDirectory({
     directory: resolve(io.cwd ?? ".", directory ?? "."),
     limits: limitsOf(io),
     write: io.stdout,
+    command: `skillcdn ${current}`,
   });
+  const latest = await later;
+  if (latest !== undefined) {
+    // Beside the report, not in it: what the directory holds is on standard output alone.
+    io.stderr(
+      `skillcdn ${latest} is published, and this is ${current}: a later version may read a pack by later rules. Run npx @skillcdn/cli@latest check, or update the command that is installed. --offline asks nothing.\n`,
+    );
+  }
+  return code;
 }
 
 // Serving a directory (ADR-0057): the same tools and routes a deployment serves, from the index

@@ -3,7 +3,7 @@
 A pack needs no skill at all: a handbook, a product manual, a body of specifications or reports is served as a pack of documents, and an agent that connects browses it, searches it by words and by meaning, and reads what it needs by sections ([document packs](../specs/skill-repo.md#document-packs)). What every pack shares, the manifest, the license, who may read it, the check, publishing, is in [writing a pack](write-a-repository.md); a repository may hold skills beside its documents, written as [writing skills](write-skills.md) says, and a document pack often does, to say how its documents are worked. The rules on this page are [the SkillCDN Format](../specs/skill-repo.md)'s, which is the reference. The steps an agent follows to make such a pack from a person's files, and to work one, are skills of the reference pack, [skillcdn/skills](https://github.com/skillcdn/skills): `skillcdn-document-pack` and `skillcdn-document-research`, served at `skillcdn.ai/gh/skillcdn/skills`, and readable without a connection:
 
 ```sh
-npx @skillcdn/cli skill gh/skillcdn/skills engineering/skills/skillcdn-document-pack/SKILL.md
+npx @skillcdn/cli@latest skill gh/skillcdn/skills engineering/skills/skillcdn-document-pack/SKILL.md
 ```
 
 They follow the format and define nothing of it; a pack made by hand, or by a skill of your own, is served the same.

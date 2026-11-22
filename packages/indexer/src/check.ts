@@ -40,6 +40,11 @@ export interface CheckOptions {
   readonly limits: IndexLimits;
   /** Where the report goes. */
   readonly write: (text: string) => void;
+  /**
+   * What ran the check, with its version, as `skillcdn 0.6.0`: the first line of the report
+   * names it beside the version of the reading rules, so that a report says what wrote it.
+   */
+  readonly command?: string | undefined;
 }
 
 /** How many not-served paths the report names. */
@@ -128,7 +133,7 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
   const overview = folderOverview(catalogFiles, ROOT_PATH);
 
   write(
-    `Read ${root} as SkillCDN would index it (reading rules version ${INDEX_VERSION}): ${fileCount} files` +
+    `Read ${root} as SkillCDN would index it (${options.command === undefined ? "" : `${options.command}, `}reading rules version ${INDEX_VERSION}): ${fileCount} files` +
       `${skipped === 0 ? "" : `; ${skipped} .git entries, symbolic links or node_modules skipped`}` +
       `${index.truncated ? "; over the indexing limits, so the index is partial" : ""}.\n\n`,
   );

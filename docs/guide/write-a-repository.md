@@ -58,13 +58,15 @@ Put a license file at the repository root, and choose a permissive one if the co
 `skillcdn check` reads the directory as a deployment would index it and prints what an agent would get, with a diagnostic for everything that will not be served as you meant it: a `SKILL.md` whose front-matter does not parse, a link that names no file, a picture without alternative text, an original that is not there. It needs no account and no server ([checking a repository](../specs/skill-repo.md#checking-a-repository-before-pushing)):
 
 ```sh
-npx @skillcdn/cli check
+npx @skillcdn/cli@latest check
 ```
+
+Write `@latest`: without it `npx` runs the version it fetched before, which reads by the rules of its day. The first line of the report names the command's version and the version of the rules, and a line on standard error says when a later version is published (`--offline` asks nothing).
 
 It exits with `1` when something could not be read as intended, so it can gate a push from a script or a CI job:
 
 ```yaml
-- run: npx @skillcdn/cli check
+- run: npx @skillcdn/cli@latest check
 ```
 
 The same command reads a directory as an agent would get it, `skillcdn skills`, `browse`, `find`, `skill` and `file`, and `skillcdn serve` serves it over MCP and HTTP from the machine, before anything is pushed ([the command](../../packages/cli/README.md)).
