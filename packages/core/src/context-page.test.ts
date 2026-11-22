@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextLinesPage, contextPage, tableHeadAt } from "./context-page.js";
+import { contextLinesPage, contextPage, pageOfContext, tableHeadAt } from "./context-page.js";
 
 describe("contextPage", () => {
   it("bounds mixed-language text by bytes without splitting characters", () => {
@@ -137,6 +137,30 @@ describe("a page of Markdown (ADR-0118)", () => {
     const prose = `${paragraph(30)}\n${paragraph(30)}\n${paragraph(30)}`;
     const part = contextLinesPage(prose, 0, 200, { mayBeEmpty: true });
     expect(part.content).toBe(`${paragraph(30)}\n`);
+  });
+
+  it("gives up a block within its whole reach where the text begins after other text (ADR-0122)", () => {
+    // What a page of a served skill did: 5,000 characters of an included file fit after the
+    // skill's body, and the file's first example of code began 2,000 characters in and ran on
+    // past them. Half of the 5,000 did not reach back to where the example began.
+    const before = `# Build\n\n${paragraph(398)}\n`;
+    const code = `\`\`\`sql\n${"  subject_id TEXT, -- the thing unlocked\n".repeat(75)}\`\`\`\n`;
+    const text = `${before}${code}\n${paragraph(400)}`;
+    expect(before.length).toBe(2_000);
+    expect(code.length).toBeLessThan(4_096);
+    expect(contextLinesPage(text, 0, 5_000, { mayBeEmpty: true }).content).toBe(before);
+    // A page that begins with the text still keeps half of what it could hold of it.
+    expect(contextLinesPage(text, 0, 5_000).content.length).toBeGreaterThan(2_500);
+
+    // The same through the pages of a context: the body, then the file.
+    const body = paragraph(2_000);
+    const page = pageOfContext([body, text], 0, body.length + 5_000);
+    expect(page.parts).toEqual([
+      { content: body, truncated: false },
+      { content: before, truncated: true },
+    ]);
+    const next = pageOfContext([body, text], page.consumed, body.length + 5_000);
+    expect(next.parts[1]?.content.startsWith(code)).toBe(true);
   });
 
   it("gives the text whole and nothing of it twice, whatever it holds", () => {

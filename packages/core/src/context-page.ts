@@ -227,9 +227,12 @@ export function countContextPages(texts: readonly string[], budget: number): num
  * run out. The next page begins where this one ends, so the pages are the text and nothing of it
  * twice.
  *
- * With `mayBeEmpty`, for a text that begins on a page that already holds something: when no such
- * place is in what the page could hold of it, and that is no more than {@link BLOCK_REACH}, the
- * page takes nothing of the text, and the next page begins with it.
+ * With `mayBeEmpty`, for a text that begins on a page that already holds something: the half does
+ * not bound the reach, since the page is not left short by what it gives up of a text it holds
+ * other text before, and a block shorter than the reach is not cut for beginning in the first
+ * half of the little the page could hold. When no such place is in what the page could hold of
+ * the text, and that is no more than {@link BLOCK_REACH}, the page takes nothing of it, and the
+ * next page begins with it.
  */
 export function contextLinesPage(
   text: string,
@@ -244,12 +247,13 @@ export function contextLinesPage(
   const page = contextPage(text, offset, budget);
   if (!page.more) return page;
   const length = page.content.length;
-  const mayBeEmpty = options.mayBeEmpty === true && length <= BLOCK_REACH;
+  const late = options.mayBeEmpty === true;
+  const mayBeEmpty = late && length <= BLOCK_REACH;
   const block = lastBlockEnd(
     text,
     offset,
     offset + length,
-    mayBeEmpty ? length : Math.min(BLOCK_REACH, length >> 1),
+    Math.min(BLOCK_REACH, late ? length : length >> 1),
   );
   const line = page.content.lastIndexOf("\n") + 1;
   const space = page.content.lastIndexOf(" ") + 1;
