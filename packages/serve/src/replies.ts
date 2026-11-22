@@ -40,6 +40,12 @@ export const fitsReply = (result: ToolReply): boolean =>
 /** What the lists of a skill's supporting files and of its references may take of the first page. */
 const SKILL_FILES_BYTES = 3_072;
 const SKILL_REFERENCES_BYTES = 2_048;
+/** The room for the paths of the references a skill's first page does not resolve. */
+const SKILL_UNLISTED_REFERENCES_BYTES = 1_024;
+
+/** Whether {@link compactSummary} at `length` leaves something of the text out. */
+const isLongerThan = (text: string, length: number): boolean =>
+  text.replaceAll(/\s+/g, " ").trim().length > length;
 
 const diagnosticsOf = (diagnostics: readonly IndexDiagnostic[]) => ({
   diagnostics: diagnostics.slice(0, 3).map((diagnostic) => ({
@@ -169,6 +175,30 @@ export function skillReply(result: SkillResult, continuation = false): ToolReply
       metadata[key] = value;
     }
   }
+  // What the first page shortens is named, so that a reader knows whether what it needs is
+  // among it: the description, the metadata, the warnings.
+  const entries = Object.keys(result.metadata).length;
+  const abbreviated = continuation
+    ? []
+    : [
+        isLongerThan(result.description, 360) ? "the description" : undefined,
+        Object.keys(metadata).length < entries
+          ? `the metadata (${Object.keys(metadata).length} of ${entries} entries)`
+          : undefined,
+        result.warnings.length > 3
+          ? `the warnings (3 of ${result.warnings.length})`
+          : orderedWarnings.some((warning) => isLongerThan(warning, 240))
+            ? "the warnings (shortened)"
+            : undefined,
+      ].filter((part) => part !== undefined);
+  // The references beyond the ones resolved are named by the file each points to, which costs
+  // little and tells the reader what else the skill leans on.
+  const unlisted = continuation ? [] : references.slice(shownReferences.length);
+  const unlistedPaths = briefList(
+    unlisted.map((reference) => reference.path),
+    unlisted.length,
+    SKILL_UNLISTED_REFERENCES_BYTES,
+  );
   const data: SkillResult = {
     ...result,
     description,
@@ -176,17 +206,21 @@ export function skillReply(result: SkillResult, continuation = false): ToolReply
     compatibility: continuation ? undefined : result.compatibility,
     allowedTools: continuation ? undefined : result.allowedTools,
     metadata,
-    detailsTruncated:
-      !continuation &&
-      (Object.keys(metadata).length < Object.keys(result.metadata).length ||
-        description !== result.description ||
-        result.warnings.length > 3 ||
-        shownWarnings.some((warning, index) => warning !== orderedWarnings[index])),
+    detailsTruncated: abbreviated.length > 0,
+    ...(abbreviated.length > 0 ? { detailsAbbreviated: abbreviated } : {}),
     files: shownFiles,
     filesTruncated:
       !continuation && (result.filesTruncated || result.files.length > shownFiles.length),
     references: shownReferences,
-    referencesTruncated: !continuation && references.length > shownReferences.length,
+    referencesTruncated: unlisted.length > 0,
+    ...(unlisted.length > 0
+      ? {
+          referencesUnlisted: {
+            paths: unlistedPaths,
+            more: unlisted.length - unlistedPaths.length,
+          },
+        }
+      : {}),
     included: result.included.filter((file) => file.content !== ""),
     warnings: shownWarnings,
     // The license line is written from the serving decision. A skill that is only described

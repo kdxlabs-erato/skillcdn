@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextLinesPage, contextPage } from "./context-page.js";
+import { contextLinesPage, contextPage, tableHeadAt } from "./context-page.js";
 
 describe("contextPage", () => {
   it("bounds mixed-language text by bytes without splitting characters", () => {
@@ -64,5 +64,105 @@ describe("contextLinesPage", () => {
     }
     const hostile = `${"\n".repeat(50)}${String.fromCharCode(0xd800)}${"a b".repeat(400)}`;
     expect(pagesOf(hostile, 64).join("")).toBe(hostile);
+  });
+});
+
+describe("a page of Markdown (ADR-0118)", () => {
+  const paragraph = (words: number): string => `${"word ".repeat(words).trim()}\n`;
+  const table = (rows: number): string =>
+    `| Input | Source |\n|---|---|\n${Array.from({ length: rows }, (_, row) => `| item ${row} | where item ${row} comes from |\n`).join("")}`;
+
+  it("ends before a table the bytes would cut, not inside it", () => {
+    const before = `# Inputs\n\n${paragraph(60)}\n`;
+    const text = `${before}${table(20)}\nAfter the table.\n`;
+    const page = contextLinesPage(text, 0, before.length + 200);
+    expect(page.content).toBe(before);
+    // The next page has the table whole, so nothing is said of its head.
+    expect(tableHeadAt(text, before.length)).toBeUndefined();
+    expect(contextLinesPage(text, before.length, 4_000).content).toBe(text.slice(before.length));
+  });
+
+  it("ends before a code block the bytes would cut, and before the line that announces it", () => {
+    const before = `${paragraph(80)}\n`;
+    const code = `Run:\n\n\`\`\`json\n${'{ "key": "value" }\n'.repeat(12)}\`\`\`\n`;
+    const text = `${before}${code}\n${paragraph(10)}`;
+    // The bytes run out inside the block: the page gives up the block and the line before it.
+    expect(contextLinesPage(text, 0, before.length + 120).content).toBe(before);
+    // A fence of tildes, and a longer fence that holds a shorter one, are blocks as well.
+    const nested = `${before}~~~~\n\`\`\`\ninner\n\`\`\`\n${"line\n".repeat(20)}~~~~\n\nEnd.\n`;
+    expect(contextLinesPage(nested, 0, before.length + 60).content).toBe(before);
+  });
+
+  it("does not end right after a heading, nor after a line that opens a list", () => {
+    const before = `${paragraph(80)}\n`;
+    const heading = `${before}### Phase 3: Board\n\n${paragraph(200)}`;
+    expect(contextLinesPage(heading, 0, before.length + 24).content).toBe(before);
+    const first = `${paragraph(80)}\n`;
+    const list = `${first}Then:\n\n- one\n- two\n${paragraph(200)}`;
+    expect(contextLinesPage(list, 0, first.length + 8).content).toBe(first);
+    // Between two items of a list is a place to stop: a long list has no other.
+    const items = `${first}Then:\n\n${"- an item of the list\n".repeat(40)}`;
+    const page = contextLinesPage(items, 0, first.length + 400);
+    expect(page.content.endsWith("- an item of the list\n")).toBe(true);
+    expect(page.content.length).toBeGreaterThan(first.length + 300);
+  });
+
+  it("cuts a table longer than its reach after a row, and names its head for the next page", () => {
+    const text = `${paragraph(20)}\n${table(400)}\nAfter.\n`;
+    const page = contextLinesPage(text, 0, 8_000);
+    expect(page.content.endsWith("|\n")).toBe(true);
+    expect(page.content.length).toBeGreaterThan(7_000);
+    expect(tableHeadAt(text, page.content.length)).toBe("| Input | Source |\n|---|---|\n");
+    // Nowhere else: before the table, at its first row of names, after it, or inside a line.
+    expect(tableHeadAt(text, 0)).toBeUndefined();
+    expect(tableHeadAt(text, text.indexOf("| Input"))).toBeUndefined();
+    expect(tableHeadAt(text, text.indexOf("After."))).toBeUndefined();
+    expect(tableHeadAt(text, page.content.length + 3)).toBeUndefined();
+    // A line of dashes under a paragraph is a heading, not a table.
+    const setext = "Title | with a bar\n---\nBody line one.\nBody line two.\n";
+    expect(tableHeadAt(setext, setext.indexOf("Body line two."))).toBeUndefined();
+  });
+
+  it("leaves a text that begins late on a page to the next page, when it has no place to stop", () => {
+    const text = `${table(30)}\nAfter.\n`;
+    // Alone on a page, something of it must be read.
+    expect(contextLinesPage(text, 0, 300).content.length).toBeGreaterThan(0);
+    // After other texts, the page ends before it.
+    expect(contextLinesPage(text, 0, 300, { mayBeEmpty: true })).toEqual({
+      content: "",
+      bytes: 0,
+      more: true,
+    });
+    // A text with a place to stop gives the page what comes before that place.
+    const prose = `${paragraph(30)}\n${paragraph(30)}\n${paragraph(30)}`;
+    const part = contextLinesPage(prose, 0, 200, { mayBeEmpty: true });
+    expect(part.content).toBe(`${paragraph(30)}\n`);
+  });
+
+  it("gives the text whole and nothing of it twice, whatever it holds", () => {
+    const text = [
+      "# Skill\n\n",
+      paragraph(120),
+      "\n## Inputs\n\n",
+      table(60),
+      "\nThen:\n\n",
+      "- one\n- two\n\n",
+      "```sh\n",
+      "echo one\n".repeat(80),
+      "```\n\n",
+      paragraph(300),
+      "\n### Verdicts\n\n",
+      table(15),
+    ].join("");
+    for (const budget of [256, 1_024, 4_096, 16_384]) {
+      const pages: string[] = [];
+      for (let offset = 0; offset < text.length; ) {
+        const page = contextLinesPage(text, offset, budget);
+        expect(page.content.length).toBeGreaterThan(0);
+        pages.push(page.content);
+        offset += page.content.length;
+      }
+      expect(pages.join("")).toBe(text);
+    }
   });
 });

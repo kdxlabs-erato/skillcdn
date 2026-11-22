@@ -660,9 +660,14 @@ export function renderSkillResult(result: SkillResult, words: ToolWords = MCP_TO
       })),
       body: result.body,
       included: result.included,
+      tableHead: result.tableHead,
     },
     { tool: words.load, reader: words.read, piece: words.piece },
   );
+  const source =
+    result.path ?? `${result.directory.length === 0 ? "" : `${result.directory}/`}SKILL.md`;
+  const unlisted = result.referencesUnlisted;
+  const folder = `${words.browse} ${JSON.stringify({ path: result.directory })}`;
 
   return joinSections([
     header.join("\n"),
@@ -672,14 +677,20 @@ export function renderSkillResult(result: SkillResult, words: ToolWords = MCP_TO
     files,
     oversized,
     warnings,
+    // What was shortened is said by name: a reader told only that something was does not know
+    // whether what it needs is among it.
     result.detailsTruncated
-      ? `Optional details abbreviated; ${words.read} ${result.path ?? `${result.directory.length === 0 ? "" : `${result.directory}/`}SKILL.md`} has the source.`
+      ? result.detailsAbbreviated === undefined || result.detailsAbbreviated.length === 0
+        ? `Optional details abbreviated; ${words.read} ${source} has the source.`
+        : `Abbreviated above: ${result.detailsAbbreviated.join(", ")}. The instructions below are whole; ${words.read} ${source} has the source.`
       : undefined,
     notices(result.mount).join("\n"),
     document,
     renderReferences(result.references),
     result.referencesTruncated
-      ? `Reference list abbreviated; consult source links or ${words.browse} the skill folder.`
+      ? unlisted === undefined || unlisted.paths.length + unlisted.more === 0
+        ? `Reference list abbreviated; consult source links or ${words.browse} the skill folder.`
+        : `${plural(unlisted.paths.length + unlisted.more, "more linked file", "more linked files")}, not resolved above${unlisted.paths.length === 0 ? "" : `: ${unlisted.paths.join(", ")}${unlisted.more === 0 ? "" : `, and ${unlisted.more} more`}`}. Each is linked where the text names it; ${folder} lists the skill's own files.`
       : undefined,
   ]);
 }

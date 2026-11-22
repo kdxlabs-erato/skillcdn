@@ -381,8 +381,20 @@ export interface IncludedFile {
 
 export interface SkillResult {
   readonly referencesTruncated?: boolean;
+  /**
+   * With `referencesTruncated`: the files the references left out point to, by path, as far as
+   * they fit, and how many more there are beyond those.
+   */
+  readonly referencesUnlisted?: { readonly paths: readonly string[]; readonly more: number };
   /** Optional metadata or author warnings were abbreviated; source content is unchanged. */
   readonly detailsTruncated?: boolean;
+  /** With `detailsTruncated`: what was abbreviated, in words. */
+  readonly detailsAbbreviated?: readonly string[];
+  /**
+   * Where the page begins at a row of a table whose first lines the page before had: those
+   * lines, the row of names and the row under it, for the first text of the page (ADR-0118).
+   */
+  readonly tableHead?: string;
   readonly path?: RepoPath;
   readonly ruleChain?: readonly SkillRules[];
   readonly references?: readonly FileReference[];

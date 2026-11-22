@@ -264,6 +264,55 @@ describe("rendering", () => {
     expect(text).not.toContain("Skill context is incomplete");
   });
 
+  it("says what a first page abbreviated, and names the linked files it did not resolve", () => {
+    const text = renderSkillResult(
+      skillResult({
+        path: path("write/SKILL.md"),
+        directory: path("write"),
+        complete: true,
+        detailsTruncated: true,
+        detailsAbbreviated: ["the description", "the warnings (3 of 5)"],
+        referencesTruncated: true,
+        referencesUnlisted: { paths: ["write/a.md", "docs/b.md"], more: 4 },
+      }),
+    );
+    expect(text).toContain(
+      "Abbreviated above: the description, the warnings (3 of 5). The instructions below are whole; read_repo_file write/SKILL.md has the source.",
+    );
+    expect(text).toContain(
+      '6 more linked files, not resolved above: write/a.md, docs/b.md, and 4 more. Each is linked where the text names it; browse_repo {"path":"write"} lists the skill\'s own files.',
+    );
+    expect(text).not.toContain("abbreviated;");
+    const one = renderSkillResult(
+      skillResult({
+        referencesTruncated: true,
+        referencesUnlisted: { paths: ["write/a.md"], more: 0 },
+      }),
+    );
+    expect(one).toContain("1 more linked file, not resolved above: write/a.md. Each is linked");
+  });
+
+  it("says the head of a table again above the rows a page begins with (ADR-0118)", () => {
+    const head = "| Input | Source |\n|---|---|\n";
+    const rows = "| The task | Its number |\n| The work | Its body |\n";
+    const text = renderSkillResult(
+      skillResult({
+        body: "",
+        tableHead: head,
+        included: [
+          { path: path("write/inputs.md"), content: rows, truncated: false },
+          { path: path("write/other.md"), content: "Other.", truncated: false },
+        ],
+      }),
+    );
+    // Above the first text of the page, the one the page before cut, and nowhere else.
+    expect(text).toContain(
+      `--- included file: write/inputs.md ---\n(The table goes on from the page before; its first lines again:)\n${head}${rows}`,
+    );
+    expect(text.split("its first lines again").length).toBe(2);
+    expect(text).toContain("--- included file: write/other.md ---\nOther.");
+  });
+
   it("lists search results with a skill's matching files under the skill", () => {
     const text = renderFindResult({
       mount,

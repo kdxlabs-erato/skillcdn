@@ -81,6 +81,45 @@ describe("MCP context projections", () => {
     expect(result.content[0]?.text).toContain("incomplete");
   });
 
+  it("names what the first page shortened, and the linked files it did not resolve", () => {
+    const references = Array.from({ length: 9 }, (_, index) => ({
+      path: `skills/write/references/page-${index}.md`,
+      href: `references/page-${index}.md`,
+      status: "available" as const,
+    }));
+    const text =
+      skillReply(
+        skill({
+          description: "Long discovery description. ".repeat(80),
+          warnings: ["One.", "Two.", "Three.", "Four.", "Five."],
+          references,
+        }),
+      ).content[0]?.text ?? "";
+    expect(text).toContain(
+      "Abbreviated above: the description, the warnings (3 of 5). The instructions below are whole; read_repo_file skills/write/SKILL.md has the source.",
+    );
+    // Five are resolved; the other four are named by the file each points to.
+    expect(text).toContain(
+      "4 more linked files, not resolved above: skills/write/references/page-5.md, skills/write/references/page-6.md, skills/write/references/page-7.md, skills/write/references/page-8.md. Each is linked where the text names it",
+    );
+    // A description that is only written on several lines is whole on one, and nothing is
+    // said of it; nor of references that are all resolved.
+    const whole =
+      skillReply(skill({ description: "Writes\n  a result.", references: references.slice(0, 5) }))
+        .content[0]?.text ?? "";
+    expect(whole).toContain("Description: Writes a result.");
+    expect(whole).not.toContain("Abbreviated");
+    expect(whole).not.toContain("more linked file");
+    // More paths than the line has room for are counted.
+    const many = Array.from({ length: 80 }, (_, index) => ({
+      path: `skills/write/references/a-long-name-of-a-page-${index}.md`,
+      href: `references/a-long-name-of-a-page-${index}.md`,
+      status: "available" as const,
+    }));
+    const counted = skillReply(skill({ references: many })).content[0]?.text ?? "";
+    expect(counted).toMatch(/75 more linked files, not resolved above: .*, and \d+ more\. Each/);
+  });
+
   it("does not repeat optional discovery metadata on continuation pages", () => {
     const result = skillReply(
       skill({

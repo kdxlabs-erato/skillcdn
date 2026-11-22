@@ -474,6 +474,11 @@ export const restSkillSchema = z.discriminatedUnion("status", [
       allowedTools: z.nullable(z.string()),
       metadata: z.record(z.string(), z.string()),
       body: z.string(),
+      /**
+       * On a page that begins at a row of a table: the first lines of that table, which the
+       * page before had, for whoever shows the page alone (ADR-0118). Not part of the text.
+       */
+      tableHead: z.optional(z.string()),
       files: z.array(z.string()),
       filesTruncated: z.boolean(),
       /**

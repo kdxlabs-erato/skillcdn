@@ -338,6 +338,67 @@ describe("the reads of a directory", () => {
     expect(parsed.skill.complete).toBe(true);
   });
 
+  it("ends a part between two blocks, and says the head of a table again where it must cut one (ADR-0118)", async () => {
+    const prose = (name: string, count: number) =>
+      Array.from({ length: count }, (_, at) => `Sentence ${at} of the ${name} page.\n`).join("");
+    const small = `| Input | Source |\n|---|---|\n${Array.from({ length: 50 }, (_, at) => `| input ${at} | where input ${at} is |\n`).join("")}`;
+    const long = `| Verdict | When |\n|---|---|\n${Array.from({ length: 700 }, (_, at) => `| verdict ${at} | when verdict ${at} holds |\n`).join("")}`;
+    const root = await repository({
+      ...PACK,
+      "engineering/tables/SKILL.md":
+        "---\nname: tables\ndescription: A skill of tables.\nskillcdn:\n  include:\n    - references/inputs.md\n    - references/verdicts.md\n---\n# Tables\n\nRead both.\n",
+      // The small table stands where the first page's bytes run out.
+      "engineering/tables/references/inputs.md": `# Inputs\n\n${prose("inputs", 420)}\n${small}\n${prose("after", 40)}`,
+      "engineering/tables/references/verdicts.md": `# Verdicts\n\nThese hold:\n\n${long}\nDone.\n`,
+    });
+    const parts: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const { code, out } = await run([
+        "skill",
+        root,
+        "engineering/tables/SKILL.md",
+        ...(cursor === undefined ? [] : ["--cursor", cursor]),
+      ]);
+      expect(code).toBe(0);
+      parts.push(out);
+      cursor = /--cursor (\S+)\n$/.exec(out)?.[1];
+      expect(parts.length).toBeLessThan(20);
+    } while (cursor !== undefined);
+    expect(parts.length).toBeGreaterThan(2);
+    // The table that fits in the reach of a part's end is in one part, whole.
+    const holding = parts.filter((part) => part.includes("| input "));
+    expect(holding).toHaveLength(1);
+    expect(holding[0]).toContain(small);
+    // The long one is cut after a row, and every part that has rows of it has its head above
+    // them: its own once, and said again in the parts that go on with it.
+    const withRows = parts.filter((part) => part.includes("| verdict "));
+    expect(withRows.length).toBeGreaterThan(1);
+    for (const part of withRows.slice(1)) {
+      expect(part).toContain(
+        "(The table goes on from the part before; its first lines again:)\n| Verdict | When |\n|---|---|\n| verdict ",
+      );
+    }
+    expect(withRows[0]).not.toContain("its first lines again");
+    // No part ends right after a heading or the line that announces the table.
+    for (const part of parts.slice(0, -1)) {
+      expect(part).not.toMatch(/(?:# Verdicts|These hold:)\n*\(Continues in the next part\.\)/);
+    }
+    // Every row is printed once, and the skill whole holds each head once.
+    const printed = parts.join("\n");
+    for (const at of [0, 349, 699]) {
+      expect(printed.split(`| verdict ${at} |`).length).toBe(2);
+    }
+    const json = await run(["skill", root, "engineering/tables/SKILL.md", "--json"]);
+    const parsed = restSkillSchema.parse(JSON.parse(json.out));
+    if (parsed.status !== "ready") throw new Error("not ready");
+    const verdicts = parsed.skill.includedContents?.find((file) =>
+      file.path.endsWith("verdicts.md"),
+    );
+    expect(verdicts?.content?.split("| Verdict | When |").length).toBe(2);
+    expect(parsed.skill.tableHead).toBeUndefined();
+  });
+
   it("prints a page of a file within what a host shows whole, ended at a line (ADR-0108)", async () => {
     const rows = Array.from(
       { length: 900 },

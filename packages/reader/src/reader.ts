@@ -106,6 +106,7 @@ import {
   skillDocumentInput,
   skillUriPrefix,
   splitFrontMatter,
+  tableHeadAt,
 } from "@skillcdn/core";
 import {
   continuationKey,
@@ -1953,6 +1954,9 @@ export class Reader<M extends MountContext = MountContext> {
       let remaining = pageBytes;
       let consumed = 0;
       let total = 0;
+      // The page begins inside one text at most, the one the cursor stands in: where that is a
+      // table whose first lines the page before had, its head goes with the page (ADR-0118).
+      let tableHead: string | undefined;
       const page = (text: string): { content: string; truncated: boolean } => {
         total += text.length;
         if (skip >= text.length) {
@@ -1962,8 +1966,10 @@ export class Reader<M extends MountContext = MountContext> {
         const offset = skip;
         skip = 0;
         if (remaining <= 0) return { content: "", truncated: text.length > 0 };
-        // A section cut by the page ends after a line where it can, not inside a word.
-        const part = contextLinesPage(text, offset, remaining);
+        // A section cut by the page ends between two blocks where it can, and after a line
+        // otherwise; one that begins late on a page with no such place in reach begins the next.
+        const part = contextLinesPage(text, offset, remaining, { mayBeEmpty: consumed > 0 });
+        if (offset > 0 && part.content.length > 0) tableHead = tableHeadAt(text, offset);
         // A deferred character must precede every later section on the next page.
         remaining = part.more ? 0 : remaining - part.bytes;
         consumed += part.content.length;
@@ -2003,6 +2009,7 @@ export class Reader<M extends MountContext = MountContext> {
         allowedTools: skill.frontMatter?.allowedTools,
         metadata: skill.frontMatter?.metadata ?? {},
         body,
+        ...(tableHead === undefined ? {} : { tableHead }),
         files: files
           .slice(0, MAX_LISTED_SKILL_FILES)
           .map((file) => belowMount(mount, file))

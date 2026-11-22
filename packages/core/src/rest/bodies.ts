@@ -427,6 +427,7 @@ export function skillOutcome(
             allowedTools: skill.allowedTools ?? null,
             metadata: { ...skill.metadata },
             body: skill.body,
+            ...(skill.tableHead === undefined ? {} : { tableHead: skill.tableHead }),
             files: [...skill.files],
             filesTruncated: skill.filesTruncated,
             ...(skill.oversized === undefined ? {} : { oversized: [...skill.oversized] }),

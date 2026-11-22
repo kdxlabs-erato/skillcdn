@@ -36,6 +36,11 @@ export interface SkillSections {
   readonly rules: readonly SkillRulesSection[];
   readonly body: string;
   readonly included: readonly IncludedFileSection[];
+  /**
+   * For a page that begins at a row of a table: the first lines of that table, which the page
+   * before had, said again above the first text of this one (ADR-0118).
+   */
+  readonly tableHead?: string | undefined;
 }
 
 /**
@@ -161,12 +166,21 @@ export function renderSkillSections(
     continuation === undefined
       ? ""
       : `\n(Continues in the next ${continuation.piece ?? `${continuation.tool} page`}.)`;
+  // The first text of the page is the one the page before cut: rows without the head of their
+  // table are read under the wrong names, or under none.
+  let tableHead = sections.tableHead;
+  const resumed = (text: string): string => {
+    if (tableHead === undefined || text.length === 0) return text;
+    const head = tableHead;
+    tableHead = undefined;
+    return `(The table goes on from the ${continuation?.piece ?? "page"} before; its first lines again:)\n${head}${text}`;
+  };
   for (const rule of sections.rules) {
     const cut = rule.truncated === true ? continues : "";
-    parts.push(`--- applicable rules: ${rule.path} ---\n${rule.body}${cut}`);
+    parts.push(`--- applicable rules: ${rule.path} ---\n${resumed(rule.body)}${cut}`);
   }
   if (sections.body.length > 0) {
-    parts.push(`--- instructions ---\n${sections.body}`);
+    parts.push(`--- instructions ---\n${resumed(sections.body)}`);
   }
   for (const file of sections.included) {
     const header = `--- included file: ${file.path} ---`;
@@ -177,7 +191,7 @@ export function renderSkillSections(
       continue;
     }
     const cut = file.truncated === true ? continues : "";
-    parts.push(`${header}\n${file.content}${cut}`);
+    parts.push(`${header}\n${resumed(file.content)}${cut}`);
   }
   return parts.join("\n\n");
 }
