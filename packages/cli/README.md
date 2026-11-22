@@ -10,7 +10,7 @@
   <a href="https://github.com/skillcdn/skillcdn/blob/main/LICENSE.md"><img alt="License: FSL-1.1-ALv2" src="https://img.shields.io/badge/license-FSL--1.1--ALv2-3a6dd4"></a>
 </p>
 
-The `skillcdn` command, for two kinds of people. An author runs `skillcdn check` to see what an agent would get from a pack before pushing it. An agent with a shell runs `skillcdn skills`, `browse`, `find`, `skill` and `file` to read a pack as an MCP client's model reads it, and `rows` and `code` to take its tables and code blocks as data, and `skillcdn search` to find the pack to read among every pack a deployment serves, without an MCP connection: the same text, from the same reading rules, from a pack at a deployment or from a directory on the machine ([ADR-0055](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0055-the-command-reads-a-pack-as-a-deployment-serves-it.md), [ADR-0056](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0056-the-rest-api-has-a-client-and-the-command-reads-a-deployment-through-it.md)). Either runs `skillcdn mcp` or `skillcdn serve` to serve a directory as a deployment would, to the MCP client that started the command or to any client on the machine, where there is no deployment or the pack is not pushed yet ([ADR-0057](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0057-a-directory-is-served-by-the-command-over-stdio-and-http.md)).
+The `skillcdn` command, for two kinds of people. An author runs `skillcdn check` to see what an agent would get from a pack before pushing it, and `skillcdn catalog` to keep the list of skills in its README. An agent with a shell runs `skillcdn skills`, `browse`, `find`, `skill` and `file` to read a pack as an MCP client's model reads it, and `rows` and `code` to take its tables and code blocks as data, and `skillcdn search` to find the pack to read among every pack a deployment serves, without an MCP connection: the same text, from the same reading rules, from a pack at a deployment or from a directory on the machine ([ADR-0055](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0055-the-command-reads-a-pack-as-a-deployment-serves-it.md), [ADR-0056](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0056-the-rest-api-has-a-client-and-the-command-reads-a-deployment-through-it.md)). Either runs `skillcdn mcp` or `skillcdn serve` to serve a directory as a deployment would, to the MCP client that started the command or to any client on the machine, where there is no deployment or the pack is not pushed yet ([ADR-0057](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0057-a-directory-is-served-by-the-command-over-stdio-and-http.md)).
 
 ```sh
 npm install -g @skillcdn/cli                 # or: npx @skillcdn/cli@latest <command> ...
@@ -82,6 +82,21 @@ A directory is searched by words alone unless `EMBEDDINGS_URL` and `EMBEDDINGS_M
 A link whose destination is a skill URI, `skill://gh/<owner>/<repo>/<path>`, names a file of another pack ([ADR-0120](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0120-a-link-to-a-skill-uri-names-a-file-of-another-pack.md)). `check` lists such links, and `check --references` reads each once at `--url`, else `SKILLCDN_URL`, else `https://skillcdn.ai`, as `skillcdn file` would: a file that pack does not have fails the check with `1`, and a pack that could not be asked is `not known` and fails nothing.
 
 `@latest` is part of the command: a runner goes on using the version it fetched first, and a command reads by the rules it was built with. When the npm registry has a later release, `check` says so in a line on standard error, beside the report; the request is the only one `check` makes, never changes its exit code, and is left out with `--offline` or `SKILLCDN_OFFLINE=1`.
+
+## The table of skills in a README
+
+The people who open a pack at its git host read a README, and the list of skills there is a copy kept by hand. `skillcdn catalog [directory]` makes it from the pack ([ADR-0121](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0121-the-command-writes-the-table-of-a-packs-skills-into-its-readme.md)): a Markdown table of the skills a search would list, in path order, each name linked to its `SKILL.md` with the first sentence of its description, then how many there are. Printed, for the whole pack or for `--folder <path>`; or written into a file with `--write <file>`, between two comments the file holds:
+
+```markdown
+<!-- skillcdn:catalog -->
+<!-- /skillcdn:catalog -->
+```
+
+The region lists the skills under the folder the file stands in, or under the folder its opening comment names from the root of the pack, `<!-- skillcdn:catalog folder=marketing -->`, with links written from the file; a file may hold several, and nothing outside them is touched. `--check <file>` writes nothing and exits with `1` when a region is not what `--write` would make it:
+
+```yaml
+- run: npx @skillcdn/cli@latest catalog --check README.md
+```
 
 ## Exit codes and limits
 

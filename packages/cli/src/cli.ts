@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { stat, writeFile } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { ApiError, createClient, type FetchLike } from "@skillcdn/client";
@@ -30,6 +30,7 @@ import {
   openWorkingTreeFile,
   type PackReferenceAsked,
   type PackReferenceVerdict,
+  readDirectory,
   readIndexLimits,
 } from "@skillcdn/indexer";
 import {
@@ -40,6 +41,7 @@ import {
 } from "@skillcdn/inference";
 import { ReaderInputError } from "@skillcdn/reader";
 import { createLocalApp, listenOn, type ServeLogger, serveOverStdio } from "@skillcdn/serve";
+import { catalogTable, writeCatalogRegions } from "./catalog.js";
 import {
   type CredentialStore,
   createMemoryStore,
@@ -134,6 +136,7 @@ export { COMMAND_WORDS, FILE_PAGE_CHARS, OUTPUT_CHARS } from "./read.js";
 
 const COMMANDS = [
   "check",
+  "catalog",
   "skills",
   "browse",
   "find",
@@ -190,6 +193,7 @@ address. Nothing in a directory is executed.
 
 Commands:
   check [<directory>]              Report what an agent would get from the directory, before pushing.
+  catalog [<directory>]            The table of the skills for a README: print it, write it into a file, or check one.
   skills [<pack>]                  What a client is told on connect, then every skill and document.
   browse [<pack>] [<folder>]       What a folder holds, as browse_repo lists it.
   find [<pack>] <words...>         What the words find, as search_repo does.
@@ -439,6 +443,27 @@ token itself is ended on the person's account page.
   logins: `usage: skillcdn logins
 
 The deployments and repositories a token is kept for, and since when; never the tokens.
+`,
+  catalog: `usage: skillcdn catalog [<directory>] [--folder <path>] [--write <file>]... [--check <file>]...
+
+The skills of a directory as a Markdown table for the people who read its README: each skill's
+name, linked to its SKILL.md, and the first sentence of its description, in path order, then how
+many there are. Without --write or --check the table is printed, for the whole pack or for the
+skills under --folder.
+
+--write <file> writes the table into a file of the directory, between two comments the file
+holds, and leaves the rest of the file as it is:
+
+  <!-- skillcdn:catalog -->
+  <!-- /skillcdn:catalog -->
+
+The region lists the skills under the folder the file stands in, or under the folder the opening
+comment names from the root of the pack: <!-- skillcdn:catalog folder=marketing -->. A file may
+hold several regions. --check <file> writes nothing and says whether each region is what
+--write would make it. Both may be given more than once.
+
+Exit codes: 0 done, or every region checked is up to date; 1 a region is out of date, or a file
+has no region; 2 the directory or a file cannot be read.
 `,
   use: `usage: skillcdn use <address> [--url <origin>]
        skillcdn use <directory> [--as local/<owner>/<name>]
@@ -1446,6 +1471,8 @@ export async function runCli(args: readonly string[], io: CliIo): Promise<number
     switch (name) {
       case "check":
         return await checkCommand(rest, io);
+      case "catalog":
+        return await catalogCommand(rest, io);
       case "login":
         return await loginCommand(rest, io);
       case "logout":
@@ -1602,6 +1629,94 @@ function packReferenceVerifier(
     }
     return verdicts;
   };
+}
+
+/**
+ * The table of a pack's skills for a README (ADR-0121): printed, written between the comments of
+ * a file, or checked against what a file holds. The skills are the ones a search of the pack
+ * would list, read as `check` reads the directory.
+ */
+async function catalogCommand(args: readonly string[], io: CliIo): Promise<number> {
+  const parsed = parseArgs({
+    args: [...args],
+    options: {
+      help: { type: "boolean", short: "h" },
+      folder: { type: "string" },
+      write: { type: "string", multiple: true },
+      check: { type: "string", multiple: true },
+    },
+    allowPositionals: true,
+    strict: true,
+  });
+  if (parsed.values.help === true) {
+    io.stdout(HELP.catalog);
+    return 0;
+  }
+  const [directory, ...rest] = parsed.positionals;
+  if (rest.length > 0) {
+    throw new Misuse("catalog takes one directory at most.");
+  }
+  const files = [
+    ...(parsed.values.write ?? []).map((file) => ({ file, write: true })),
+    ...(parsed.values.check ?? []).map((file) => ({ file, write: false })),
+  ];
+  if (files.length > 0 && parsed.values.folder !== undefined) {
+    throw new Misuse(
+      "--folder is for the printed table; a region names its folder in its comment.",
+    );
+  }
+  const root = resolve(io.cwd ?? ".", directory ?? ".");
+  const info = await stat(root).catch(() => undefined);
+  if (info === undefined || !info.isDirectory()) {
+    io.stderr(`${directory ?? "."}: not a directory that can be read\n`);
+    return EXIT_UNREADABLE;
+  }
+  const { index } = await readDirectory({ directory: root, limits: limitsOf(io) });
+  const skills = index.entries
+    .filter((entry) => entry.kind === "skill" && entry.visible && entry.searchable)
+    .map((entry) => ({
+      path: entry.path,
+      name: entry.name ?? "",
+      description: entry.description ?? "",
+    }));
+  if (files.length === 0) {
+    const folder = (parsed.values.folder ?? "").replace(/^\.\/?|\/+$/g, "");
+    io.stdout(`${catalogTable(skills, folder, "")}\n`);
+    return 0;
+  }
+  let code = 0;
+  for (const { file, write } of files) {
+    const absolute = resolve(io.cwd ?? ".", file);
+    const inside = relative(root, absolute);
+    if (inside.startsWith("..") || resolve(root, inside) !== absolute) {
+      throw new Misuse(`${file} is not a file of ${directory ?? "the directory"}.`);
+    }
+    const text = await readFile(absolute, "utf8").catch(() => undefined);
+    if (text === undefined) {
+      io.stderr(`${file}: not a file that can be read\n`);
+      return EXIT_UNREADABLE;
+    }
+    const fileDirectory = dirname(inside).split(sep).join("/");
+    const made = writeCatalogRegions(text, fileDirectory === "." ? "" : fileDirectory, skills);
+    const regions = `${made.regions} ${made.regions === 1 ? "region" : "regions"}`;
+    if (made.regions === 0) {
+      io.stderr(
+        `${file}: no region to write: put <!-- skillcdn:catalog --> and <!-- /skillcdn:catalog --> where the table goes\n`,
+      );
+      code = EXIT_MISSING;
+    } else if (made.stale === 0) {
+      io.stdout(`${file}: up to date (${regions})\n`);
+    } else if (write) {
+      await writeFile(absolute, made.text);
+      io.stdout(`${file}: written (${made.stale} of ${regions} changed)\n`);
+    } else {
+      io.stdout(
+        `${file}: out of date (${made.stale} of ${regions}); skillcdn catalog --write ${shellWord(file)} writes it\n`,
+      );
+      code = EXIT_MISSING;
+    }
+  }
+  return code;
 }
 
 async function checkCommand(args: readonly string[], io: CliIo): Promise<number> {

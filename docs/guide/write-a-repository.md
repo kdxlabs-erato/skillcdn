@@ -71,6 +71,8 @@ It exits with `1` when something could not be read as intended, so it can gate a
 - run: npx @skillcdn/cli@latest check
 ```
 
+The README people read at the git host can hold the list of skills without anyone keeping it by hand: `skillcdn catalog --write README.md` writes a table of the pack's skills between `<!-- skillcdn:catalog -->` and `<!-- /skillcdn:catalog -->`, and `skillcdn catalog --check README.md` fails a job when the table and the pack have parted ([the command](../../packages/cli/README.md#the-table-of-skills-in-a-readme)).
+
 The same command reads a directory as an agent would get it, `skillcdn skills`, `browse`, `find`, `skill` and `file`, and `skillcdn serve` serves it over MCP and HTTP from the machine, before anything is pushed ([the command](../../packages/cli/README.md)).
 
 ## Publish
