@@ -70,6 +70,7 @@ import {
   NO_LICENSE,
   type OutlineHeading,
   outlineMarkdown,
+  type PackReference,
   pageOfContext,
   pageOfText,
   parentDirectory,
@@ -1957,6 +1958,20 @@ export class Reader<M extends MountContext = MountContext> {
         })),
       ),
     );
+    // What the skill, its rules and its included files link to in other packs (ADR-0120): each
+    // file once, with the first file of the skill that names it.
+    const packReferences: PackReference[] = [];
+    for (const entry of referenceSources) {
+      for (const reference of entry.frontMatter?.packReferences ?? []) {
+        if (
+          !packReferences.some(
+            (known) => known.pack === reference.pack && known.path === reference.path,
+          )
+        ) {
+          packReferences.push({ ...reference, source: entry.path });
+        }
+      }
+    }
     const make = (pageBytes: number): SkillResult => {
       // The rules, the body and the included files are one context, read in that order; the
       // page is cut from it by the function `check` counts a skill's pages with.
@@ -1992,6 +2007,7 @@ export class Reader<M extends MountContext = MountContext> {
         path: skill.path as RepoPath,
         ruleChain: pagedRules,
         references,
+        ...(packReferences.length === 0 ? {} : { packReferences }),
         complete: contextAvailable && nextCursor === undefined,
         nextCursor,
         name: skillName,
@@ -2167,6 +2183,7 @@ export class Reader<M extends MountContext = MountContext> {
       };
     }
     const references = await this.#references(mount, index, entry.frontMatter?.references ?? []);
+    const packReferences = entry.frontMatter?.packReferences ?? [];
     // The originals a document was made from are named on its first page (ADR-0076).
     const sources =
       (input.offset ?? 0) === 0 && entry.kind === "markdown"
@@ -2179,12 +2196,17 @@ export class Reader<M extends MountContext = MountContext> {
       const page = pageOfText(text, input.offset ?? 0, length, {
         atLineEnd: input.limit === undefined || length < input.limit,
       });
+      const linked =
+        page.content.length === text.length
+          ? packReferences
+          : packReferences.filter((reference) => page.content.includes(reference.href));
       return {
         // A page lists the links within it: a section read is not told of the rest of the file's.
         references:
           page.content.length === text.length
             ? references
             : references.filter((reference) => page.content.includes(reference.href)),
+        ...(linked.length === 0 ? {} : { packReferences: linked }),
         ...(sources.length === 0 ? {} : { sources }),
         mount: this.summary(mount, index),
         path: below,

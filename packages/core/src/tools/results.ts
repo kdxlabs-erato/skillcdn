@@ -17,6 +17,17 @@ export interface FileReference {
    */
   readonly section?: { readonly offset: number; readonly length: number };
 }
+/**
+ * A link to a file of another pack (ADR-0120): the pack, as an address without a ref, and the
+ * path of the file in it. Not readable through the mount that names it.
+ */
+export interface PackReference {
+  /** The file of this mount that holds the link, when the result gathers several. */
+  readonly source?: string;
+  readonly href: string;
+  readonly pack: string;
+  readonly path: string;
+}
 export interface BrowseEntry {
   readonly browsePath?: RepoPath;
   readonly overviewPath?: RepoPath;
@@ -398,6 +409,8 @@ export interface SkillResult {
   readonly path?: RepoPath;
   readonly ruleChain?: readonly SkillRules[];
   readonly references?: readonly FileReference[];
+  /** The files of other packs the skill, its rules and its included files link to (ADR-0120). */
+  readonly packReferences?: readonly PackReference[];
   readonly complete?: boolean;
   readonly nextCursor?: string | undefined;
   readonly mount: MountSummary;
@@ -442,6 +455,8 @@ export interface FileResult {
   /** How many links of the page the list of references leaves out, when it leaves any out. */
   readonly referencesMore?: number;
   readonly references?: readonly FileReference[];
+  /** The files of other packs the page links to (ADR-0120). */
+  readonly packReferences?: readonly PackReference[];
   /** On the first page of a Markdown document: what it says it was made from (ADR-0076). */
   readonly sources?: readonly DocumentSource[];
   readonly mount: MountSummary;

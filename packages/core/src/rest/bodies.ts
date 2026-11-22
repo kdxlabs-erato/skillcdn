@@ -415,6 +415,9 @@ export function skillOutcome(
               truncated: rule.truncated,
             })),
             references: [...(skill.references ?? [])],
+            ...(skill.packReferences === undefined || skill.packReferences.length === 0
+              ? {}
+              : { packReferences: [...skill.packReferences] }),
             complete: skill.complete ?? true,
             nextCursor: skill.nextCursor ?? null,
             includedContents: skill.included.map((file) => ({
@@ -547,6 +550,9 @@ export function fileBody(file: FileResult): RestFile {
     kind: "file",
     commit: file.mount.commit,
     references: [...(file.references ?? [])],
+    ...(file.packReferences === undefined || file.packReferences.length === 0
+      ? {}
+      : { packReferences: [...file.packReferences] }),
     ...(file.sources === undefined ? {} : { sources: file.sources.map(restSourceOf) }),
     path: file.path,
     content: file.content,

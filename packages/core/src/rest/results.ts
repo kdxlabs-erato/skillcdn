@@ -416,6 +416,7 @@ export function skillResultOf(
     ...(path === undefined ? {} : { path }),
     ruleChain,
     references: [...(skill.references ?? [])],
+    ...(skill.packReferences === undefined ? {} : { packReferences: [...skill.packReferences] }),
     complete: skill.complete ?? true,
     nextCursor: skill.nextCursor === undefined ? undefined : orUndefined(skill.nextCursor),
     name: skill.name,
@@ -466,6 +467,7 @@ export function fileResultOf(
     nextOffset: orUndefined(body.nextOffset),
     totalLength: body.totalLength,
     references: [...(body.references ?? [])],
+    ...(body.packReferences === undefined ? {} : { packReferences: [...body.packReferences] }),
     ...(body.sources === undefined ? {} : { sources: sourcesOf(body.sources) }),
   };
 }

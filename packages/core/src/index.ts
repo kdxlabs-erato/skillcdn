@@ -117,10 +117,12 @@ export {
   MAX_LINK_MARKDOWN_LENGTH,
   MAX_MARKDOWN_LINKS,
   MAX_MARKDOWN_REFERENCES,
+  MAX_PACK_LINKS,
   type MarkdownLink,
   type MarkdownLinkInspection,
   type MarkdownReference,
   type MarkdownReferenceInspection,
+  type PackLink,
   resolveLocalLink,
   resolveMarkdownReference,
 } from "./markdown-links.js";
@@ -389,6 +391,7 @@ export {
   restListingSchema,
   restMountSchema,
   restOutlineHeadingSchema,
+  restPackReferenceSchema,
   restPath,
   restReferenceSchema,
   restRepositoryCardSchema,
@@ -713,6 +716,7 @@ export type {
   FileOutlineUnavailable,
   FileReference,
   FolderOverview,
+  PackReference,
 } from "./tools/results.js";
 export {
   answeredInPart,

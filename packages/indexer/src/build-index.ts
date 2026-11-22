@@ -101,8 +101,10 @@ import { gitBlobHash, sha256Hex } from "./git-hash.js";
  * 21: a manifest names the page an agent reads first, `start`, which is served as a document
  *     wherever it stands; a path that names no served Markdown document is a diagnostic
  *     (ADR-0119).
+ * 22: a link whose destination is a skill URI names a file of another pack, kept with the file
+ *     that holds it; one under the scheme that is no skill URI is a diagnostic (ADR-0120).
  */
-export const INDEX_VERSION = 21;
+export const INDEX_VERSION = 22;
 
 /**
  * The lowest version of the reading rules whose index is still served while the commit is
@@ -447,6 +449,8 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
    * document links to its originals and its pictures by right: only a skill, which works from
    * text, is told of a reference an agent can only fetch.
    */
+  /** The links to files of other packs, by the file that holds them, as `referencesOf` finds them. */
+  const packLinks = new Map<RepoPath, { href: string; pack: string; path: string }[]>();
   const referencesOf = (path: RepoPath, text: string, options: { readonly skill: boolean }) => {
     const inspected = inspectMarkdownLinks(path, text);
     if (inspected.truncated) {
@@ -503,7 +507,28 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
         `${wordless.length === 1 ? "an image has" : `${wordless.length} images have`} no alternative text (${named(wordless)}): an agent reads a picture by the words the document gives it`,
       );
     }
+    // A link to a file of another pack is kept as written (ADR-0120): this index looks into
+    // no other repository. One that is under the scheme and is no skill URI names nothing.
+    const packs = inspected.packs.flatMap(({ href, pack, path: named }) =>
+      pack === undefined || named === undefined ? [] : [{ href, pack, path: named }],
+    );
+    const malformed = inspected.packs.filter((link) => link.pack === undefined);
+    if (malformed.length > 0) {
+      report(
+        path,
+        "pack_link_invalid",
+        `${malformed.length === 1 ? "a link names" : `${malformed.length} links name`} no file of another pack (${named(malformed.map((link) => link.href))}): a skill URI is skill://gh/<owner>/<repo>/<path>, without a ref`,
+      );
+    }
+    if (packs.length > 0) packLinks.set(path, packs);
     return inspected.references;
+  };
+  /** The links of a file to files of other packs, for its entry; nothing where it has none. */
+  const packReferencesOf = (
+    path: RepoPath,
+  ): { packReferences?: { href: string; pack: string; path: string }[] } => {
+    const found = packLinks.get(path);
+    return found === undefined ? {} : { packReferences: found };
   };
   /**
    * The originals a document names that the repository does not have, for the author. A value
@@ -735,6 +760,7 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
             documents: [...manifest.documents],
             exclude: [...manifest.exclude],
             references: referencesOf(entry.path, text, { skill: false }),
+            ...packReferencesOf(entry.path),
             ...(manifest.language === undefined ? {} : { language: manifest.language }),
             // Stored only when it says something: the documents under it are searched by words
             // alone, and their text is not embedded (ADR-0064), or the repository stays out of
@@ -779,6 +805,7 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
             metadata: { ...manifest.metadata },
             warnings: warnings.map((warning) => warning.message),
             references: referencesOf(entry.path, text, { skill: true }),
+            ...packReferencesOf(entry.path),
             ...(manifest.include.length === 0 ? {} : { include: [...manifest.include] }),
             ...(storedTranslations(manifest.translations) === undefined
               ? {}
@@ -912,6 +939,7 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
               references: referencesOf(entry.path, text, {
                 skill: owningSkillDirectory(entry.path, skillDirectories) !== undefined,
               }),
+              ...packReferencesOf(entry.path),
             }),
         ...(derivation === undefined
           ? {}

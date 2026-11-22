@@ -89,6 +89,16 @@ export const restReferenceSchema = z.object({
   /** For an available file whose link names a section by its fragment: what reads the section (ADR-0082). */
   section: z.optional(z.object({ offset: count, length: count })),
 });
+/**
+ * A link to a file of another pack (ADR-0120): the pack as an address without a ref, and the
+ * path of the file in it. This mount does not serve it.
+ */
+export const restPackReferenceSchema = z.object({
+  source: z.optional(z.string()),
+  href: z.string(),
+  pack: z.string(),
+  path: z.string(),
+});
 /** The license a skill or a repository carries, as the index classified it (ADR-0026). */
 export const restLicenseSchema = z.object({
   kind: z.enum(["permissive", "restrictive", "none"]),
@@ -464,6 +474,7 @@ export const restSkillSchema = z.discriminatedUnion("status", [
         z.array(z.object({ path: z.string(), body: z.string(), truncated: z.boolean() })),
       ),
       references: z.optional(z.array(restReferenceSchema)),
+      packReferences: z.optional(z.array(restPackReferenceSchema)),
       complete: z.optional(z.boolean()),
       nextCursor: z.optional(z.nullable(z.string())),
       includedContents: z.optional(
@@ -580,6 +591,7 @@ export const restFileSchema = z.discriminatedUnion("kind", [
     /** The commit the file was read from; every result names one. */
     commit: z.optional(z.string()),
     references: z.optional(z.array(restReferenceSchema)),
+    packReferences: z.optional(z.array(restPackReferenceSchema)),
     /** On the first page of a Markdown document: what it says it was made from (ADR-0076). */
     sources: z.optional(z.array(restDocumentSourceSchema)),
     path: z.string(),

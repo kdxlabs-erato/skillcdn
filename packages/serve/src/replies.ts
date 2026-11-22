@@ -212,6 +212,8 @@ export function skillReply(result: SkillResult, continuation = false): ToolReply
     filesTruncated:
       !continuation && (result.filesTruncated || result.files.length > shownFiles.length),
     references: shownReferences,
+    // Said once, with the other lists of the first page.
+    packReferences: continuation ? undefined : result.packReferences,
     referencesTruncated: unlisted.length > 0,
     ...(unlisted.length > 0
       ? {

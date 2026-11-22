@@ -20,6 +20,7 @@ import type {
   HubResult,
   IndexDiagnostic,
   MountSummary,
+  PackReference,
   SkillResult,
 } from "./results.js";
 
@@ -48,6 +49,34 @@ function renderReferences(references: readonly FileReference[] | undefined): str
   return references === undefined || references.length === 0
     ? undefined
     : `Resolved references:\n${references.map((reference) => `- ${reference.source === undefined ? "" : `${reference.source}: `}${reference.href} -> ${reference.path} (${reference.status})`).join("\n")}`;
+}
+
+/** How many files of other packs a result names; the rest are counted. */
+const PACK_REFERENCES = 12;
+
+/**
+ * The files of other packs a skill or a page links to (ADR-0120), by pack and path, with how
+ * each is read: at its own pack, through a connection to it or with the command. This mount
+ * serves its own repository and nothing of another.
+ */
+function renderPackReferences(
+  references: readonly PackReference[] | undefined,
+  words: ToolWords,
+): string | undefined {
+  if (references === undefined || references.length === 0) return undefined;
+  const lines = references
+    .slice(0, PACK_REFERENCES)
+    .map((reference) => `- ${reference.pack} ${reference.path}`);
+  if (references.length > PACK_REFERENCES) {
+    lines.push(`- ... (${references.length - PACK_REFERENCES} more)`);
+  }
+  const command =
+    "skillcdn skill <pack> <path> for a SKILL.md, skillcdn file <pack> <path> for another file";
+  // A command's reader has the command; a tool's reader may have a connection to the pack.
+  const how = words.load.startsWith("skillcdn ")
+    ? `Read each at its pack: ${command}.`
+    : `Read each at its pack: over a connection to it, ${words.load} for a SKILL.md and ${words.read} for another file; in a shell, ${command}.`;
+  return `In other packs, not readable here:\n${lines.join("\n")}\n${how}`;
 }
 
 /**
@@ -692,6 +721,7 @@ export function renderSkillResult(result: SkillResult, words: ToolWords = MCP_TO
         ? `Reference list abbreviated; consult source links or ${words.browse} the skill folder.`
         : `${plural(unlisted.paths.length + unlisted.more, "more linked file", "more linked files")}, not resolved above${unlisted.paths.length === 0 ? "" : `: ${unlisted.paths.join(", ")}${unlisted.more === 0 ? "" : `, and ${unlisted.more} more`}`}. Each is linked where the text names it; ${folder} lists the skill's own files.`
       : undefined,
+    renderPackReferences(result.packReferences, words),
   ]);
 }
 
@@ -739,6 +769,7 @@ export function renderFileResult(result: FileResult, words: ToolWords = MCP_TOOL
     notices(result.mount).join("\n"),
     `--- content ---\n${result.content}`,
     renderFileReferences(result.references, result.referencesMore, words),
+    renderPackReferences(result.packReferences, words),
     result.referencesTruncated && result.referencesMore === undefined
       ? "Reference list abbreviated; consult source links."
       : undefined,

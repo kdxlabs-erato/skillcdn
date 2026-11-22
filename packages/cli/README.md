@@ -79,6 +79,8 @@ A directory is searched by words alone unless `EMBEDDINGS_URL` and `EMBEDDINGS_M
 - run: npx @skillcdn/cli@latest check
 ```
 
+A link whose destination is a skill URI, `skill://gh/<owner>/<repo>/<path>`, names a file of another pack ([ADR-0120](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0120-a-link-to-a-skill-uri-names-a-file-of-another-pack.md)). `check` lists such links, and `check --references` reads each once at `--url`, else `SKILLCDN_URL`, else `https://skillcdn.ai`, as `skillcdn file` would: a file that pack does not have fails the check with `1`, and a pack that could not be asked is `not known` and fails nothing.
+
 `@latest` is part of the command: a runner goes on using the version it fetched first, and a command reads by the rules it was built with. When the npm registry has a later release, `check` says so in a line on standard error, beside the report; the request is the only one `check` makes, never changes its exit code, and is left out with `--offline` or `SKILLCDN_OFFLINE=1`.
 
 ## Exit codes and limits

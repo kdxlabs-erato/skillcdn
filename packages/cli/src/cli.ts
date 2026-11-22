@@ -25,7 +25,13 @@ import {
   type RestConnectStarted,
   renderHubResult,
 } from "@skillcdn/core";
-import { checkDirectory, openWorkingTreeFile, readIndexLimits } from "@skillcdn/indexer";
+import {
+  checkDirectory,
+  openWorkingTreeFile,
+  type PackReferenceAsked,
+  type PackReferenceVerdict,
+  readIndexLimits,
+} from "@skillcdn/indexer";
 import {
   createEmbeddingsApi,
   createRerankApi,
@@ -233,7 +239,7 @@ search: { meaning: false } keeps its documents to the words. The text of the doc
 that server and nowhere else; a server that does not answer leaves the words to answer.`;
 
 const HELP: Readonly<Record<Command, string>> = {
-  check: `usage: skillcdn check [<directory>] [--offline]
+  check: `usage: skillcdn check [<directory>] [--references [--url <origin>]] [--offline]
 
 Reads a directory as SkillCDN would index it and prints what an agent would get: the manifest,
 the license, every skill with its files, its warnings and the pages it is read in, the
@@ -246,7 +252,13 @@ npm registry has a later version, a line on standard error says so. That one req
 the network check uses, it never fails the check, and --offline (or SKILLCDN_OFFLINE=1) leaves
 it out. npx @skillcdn/cli@latest check always runs the latest.
 
-Exit codes: 0 when there are no index diagnostics, 1 when there are, 2 when the directory cannot
+A link whose destination is a skill URI, skill://gh/<owner>/<repo>/<path>, names a file of
+another pack. The report lists such links. With --references, each is read once at --url, else
+SKILLCDN_URL, else ${DEFAULT_ORIGIN}, as skillcdn file reads it: a file that pack does not have
+fails the check, and one that could not be asked about is said to be not known.
+
+Exit codes: 0 when there are no index diagnostics, 1 when there are, or when a file --references
+asked about is not there, 2 when the directory cannot
 be read. The INDEX_* and READ_MAX_FILE_BYTES variables set the limits a deployment would apply.
 `,
   skills: `usage: skillcdn skills [<pack>] [--url <origin>] [--as <address>] [--json]
@@ -1549,10 +1561,58 @@ async function laterVersion(io: CliIo, current: string): Promise<string | undefi
   }
 }
 
+/**
+ * Asks a deployment whether the files of other packs a directory links to are there (ADR-0120):
+ * one read of each, as `skillcdn file` reads it, with the token kept for the pack when there is
+ * one. A file the pack does not have is not found; anything else that keeps the answer away, a
+ * pack that is not indexed in time, a file it will not pass on, a network that is not there, is
+ * not known, and said so.
+ */
+function packReferenceVerifier(
+  io: CliIo,
+  flagUrl: string | undefined,
+): (references: readonly PackReferenceAsked[]) => Promise<readonly PackReferenceVerdict[]> {
+  return async (references) => {
+    const verdicts: PackReferenceVerdict[] = [];
+    for (const reference of references) {
+      const address = parseAddress(`/${reference.pack}`);
+      if (!address.ok) {
+        verdicts.push({ detail: "not an address" });
+        continue;
+      }
+      try {
+        const deployment = await deploymentOf(io, flagUrl, undefined, undefined, address.value);
+        const pack = openDeployment({
+          url: deployment.url,
+          address: address.value,
+          token: deployment.token,
+          fetch: io.fetch ?? ((input, init) => fetch(input, init)),
+          userAgent: io.userAgent,
+          sleep: io.sleep ?? defaultSleep,
+        });
+        const answer = await pack.file({ path: reference.path, limit: 1 });
+        verdicts.push(
+          answer.kind === "file" ? { found: true } : { detail: "a folder, not a file" },
+        );
+      } catch (error) {
+        if (error instanceof Misuse) throw error;
+        const code = error instanceof PackError ? error.code : "unreachable";
+        verdicts.push(code === "file.not_found" ? { found: false } : { detail: code });
+      }
+    }
+    return verdicts;
+  };
+}
+
 async function checkCommand(args: readonly string[], io: CliIo): Promise<number> {
   const parsed = parseArgs({
     args: [...args],
-    options: { help: { type: "boolean", short: "h" }, offline: { type: "boolean" } },
+    options: {
+      help: { type: "boolean", short: "h" },
+      offline: { type: "boolean" },
+      references: { type: "boolean" },
+      url: { type: "string" },
+    },
     allowPositionals: true,
     strict: true,
   });
@@ -1567,6 +1627,12 @@ async function checkCommand(args: readonly string[], io: CliIo): Promise<number>
   const current = version();
   const offline =
     parsed.values.offline === true || textOf(io.environment, "SKILLCDN_OFFLINE") !== undefined;
+  if (offline && parsed.values.references === true) {
+    throw new Misuse("--references asks a deployment, which --offline does not.");
+  }
+  if (parsed.values.url !== undefined && parsed.values.references !== true) {
+    throw new Misuse("--url names the deployment --references asks.");
+  }
   // Asked while the directory is read, so that the answer costs the check no time of its own.
   const later = offline ? undefined : laterVersion(io, current);
   const code = await checkDirectory({
@@ -1574,6 +1640,9 @@ async function checkCommand(args: readonly string[], io: CliIo): Promise<number>
     limits: limitsOf(io),
     write: io.stdout,
     command: `skillcdn ${current}`,
+    ...(parsed.values.references === true
+      ? { verifyPackReferences: packReferenceVerifier(io, parsed.values.url) }
+      : {}),
   });
   const latest = await later;
   if (latest !== undefined) {

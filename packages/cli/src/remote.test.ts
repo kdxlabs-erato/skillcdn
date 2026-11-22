@@ -845,3 +845,105 @@ describe("a search across the packs of a deployment (ADR-0070)", () => {
     expect(late.err).toContain("search.timeout");
   });
 });
+
+describe("links to files of other packs (ADR-0120)", () => {
+  const STUDIO: Record<string, string> = {
+    "SKILLCDN.md": "---\nname: Studio\ndescription: The studio's own skills.\n---\n",
+    "skills/card/SKILL.md": [
+      "---",
+      "name: card",
+      "description: Makes the studio's cards.",
+      "---",
+      "# Card",
+      "",
+      "This extends [the ads skill](skill://gh/acme/skills/marketing/ads/SKILL.md): load it first.",
+      "The house style is in [the guide](skill://gh/acme/skills/docs/guide.md#how).",
+      "An old step was in [a skill that moved](skill://gh/acme/skills/marketing/gone/SKILL.md).",
+      "",
+    ].join("\n"),
+    "docs/notes.md":
+      "# Notes\n\nSee [the guide](skill://gh/acme/skills/docs/guide.md) and [another pack](skill://gh/other/pack/docs/page.md).\n",
+  };
+
+  it("lists them in check, and asks a deployment whether each is there when told to", async () => {
+    const deployment = await deploymentOf(await repository(PACK));
+    const studio = await repository(STUDIO, "studio");
+    const plain = await run(["check", studio, "--offline"], deployment);
+    // A link to another pack is not looked into: the report names it and asks nothing.
+    expect(plain.code).toBe(0);
+    expect(deployment.requests).toEqual([]);
+    expect(plain.out).toContain(
+      "References to other packs: 4 (2 packs; not asked whether each is there: --references asks a deployment)\n" +
+        "- gh/acme/skills docs/guide.md (from docs/notes.md)\n" +
+        "- gh/other/pack docs/page.md (from docs/notes.md)\n" +
+        "- gh/acme/skills marketing/ads/SKILL.md (from skills/card/SKILL.md)\n" +
+        "- gh/acme/skills marketing/gone/SKILL.md (from skills/card/SKILL.md)\n",
+    );
+
+    const asked = await run(
+      ["check", studio, "--references", "--url", "https://skillcdn.example"],
+      deployment,
+    );
+    // A file its pack does not have fails the check; a pack that cannot be asked does not.
+    expect(asked.code).toBe(1);
+    expect(asked.out).toContain(
+      "References to other packs: 4 (2 packs)\n" +
+        "- gh/acme/skills docs/guide.md (from docs/notes.md): there\n" +
+        "- gh/other/pack docs/page.md (from docs/notes.md): not known (mount.repo_not_found)\n" +
+        "- gh/acme/skills marketing/ads/SKILL.md (from skills/card/SKILL.md): there\n" +
+        "- gh/acme/skills marketing/gone/SKILL.md (from skills/card/SKILL.md): NOT THERE\n",
+    );
+    expect(asked.out).toContain("1 reference(s) to other packs name a file that is not there\n");
+    expect(asked.out).toContain("ok: no index diagnostics");
+
+    const misuse = await run(["check", studio, "--references", "--offline"], deployment);
+    expect(misuse.code).toBe(EXIT_USAGE);
+    expect(misuse.err).toContain("--references asks a deployment, which --offline does not.");
+    expect(
+      (await run(["check", studio, "--url", "https://skillcdn.example"], deployment)).code,
+    ).toBe(EXIT_USAGE);
+  });
+
+  it("tells a reader of the skill, and of a page, what they link to elsewhere and how it is read", async () => {
+    const deployment = await deploymentOf(await repository(PACK));
+    const studio = await repository(STUDIO, "studio");
+    const skill = await run(["skill", studio, "skills/card/SKILL.md"], deployment);
+    expect(skill.code).toBe(0);
+    expect(skill.out).toContain(
+      "In other packs, not readable here:\n" +
+        "- gh/acme/skills marketing/ads/SKILL.md\n" +
+        "- gh/acme/skills docs/guide.md\n" +
+        "- gh/acme/skills marketing/gone/SKILL.md\n" +
+        "Read each at its pack: skillcdn skill <pack> <path> for a SKILL.md, skillcdn file <pack> <path> for another file.",
+    );
+    // The link stays in the text as written: a copy of the skill carries it without SkillCDN.
+    expect(skill.out).toContain("(skill://gh/acme/skills/marketing/ads/SKILL.md)");
+    const page = await run(["file", studio, "docs/notes.md"], deployment);
+    expect(page.out).toContain(
+      "In other packs, not readable here:\n- gh/acme/skills docs/guide.md\n- gh/other/pack docs/page.md\n",
+    );
+    // What the list says works: the command reads the file at the pack the link names.
+    const followed = await run(
+      ["skill", "gh/acme/skills", "marketing/ads/SKILL.md", "--url", "https://skillcdn.example"],
+      deployment,
+    );
+    expect(followed.out).toContain("Write three variants.");
+  });
+
+  it("reports a link under the scheme that names no file of a pack", async () => {
+    const deployment = await deploymentOf(await repository(PACK));
+    const broken = await repository(
+      {
+        ...STUDIO,
+        "docs/notes.md":
+          "# Notes\n\nSee [the pack](skill://gh/acme) and [a ref](skill://gh/acme/skills@v1/docs/guide.md).\n",
+      },
+      "studio",
+    );
+    const checked = await run(["check", broken], deployment);
+    expect(checked.code).toBe(1);
+    expect(checked.out).toContain(
+      "- docs/notes.md (pack_link_invalid): 2 links name no file of another pack (skill://gh/acme, skill://gh/acme/skills@v1/docs/guide.md): a skill URI is skill://gh/<owner>/<repo>/<path>, without a ref",
+    );
+  });
+});

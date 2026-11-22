@@ -71,6 +71,16 @@ export interface SkillFrontMatter {
     readonly section?: { readonly offset: number; readonly length: number };
   }[];
   /**
+   * The files of other packs the file links to by their skill URIs (ADR-0120): the pack as an
+   * address without a ref, and the path in it. Kept as written: no index looks into another
+   * repository, and whoever reads the link follows it at that pack.
+   */
+  readonly packReferences?: readonly {
+    readonly href: string;
+    readonly pack: string;
+    readonly path: string;
+  }[];
+  /**
    * A document that says it was made from other documents of the pack (ADR-0083), with what it
    * says it is: a result marks it, so that an agent quotes the sections it points to.
    */

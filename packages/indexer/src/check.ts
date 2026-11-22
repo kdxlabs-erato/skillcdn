@@ -45,6 +45,26 @@ export interface CheckOptions {
    * names it beside the version of the reading rules, so that a report says what wrote it.
    */
   readonly command?: string | undefined;
+  /**
+   * Asks whether the files of other packs the directory links to are there (ADR-0120), for a
+   * caller that can reach a deployment: an answer per reference, in the order given, `found`
+   * left out where it could not be learned, with why in `detail`. Left out, the report lists
+   * the references and asks nothing. A file that is not there fails the check.
+   */
+  readonly verifyPackReferences?:
+    | ((references: readonly PackReferenceAsked[]) => Promise<readonly PackReferenceVerdict[]>)
+    | undefined;
+}
+
+export interface PackReferenceAsked {
+  /** The pack, as an address without a ref: `gh/<owner>/<repo>`. */
+  readonly pack: string;
+  readonly path: string;
+}
+
+export interface PackReferenceVerdict {
+  readonly found?: boolean | undefined;
+  readonly detail?: string | undefined;
 }
 
 /** How many not-served paths the report names. */
@@ -342,6 +362,47 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
     `Optional overview files: ${overviews.length}${overviews.length === 0 ? "" : ` (${overviews.map((entry) => entry.path).join(", ")})`}\n\n`,
   );
   write(`Linked reference files: ${linked.length}\n\n`);
+
+  // The files of other packs the pack links to by their skill URIs (ADR-0120). This check reads
+  // one directory: whether each is there is asked of a deployment, when the caller can ask.
+  const elsewhere = new Map<string, { pack: string; path: string; from: string }>();
+  for (const entry of index.entries.filter((candidate) => candidate.visible).sort(byPath)) {
+    for (const reference of entry.frontMatter?.packReferences ?? []) {
+      const key = `${reference.pack} ${reference.path}`;
+      if (!elsewhere.has(key)) {
+        elsewhere.set(key, { pack: reference.pack, path: reference.path, from: entry.path });
+      }
+    }
+  }
+  const references = [...elsewhere.values()];
+  const verdicts =
+    options.verifyPackReferences === undefined || references.length === 0
+      ? undefined
+      : await options.verifyPackReferences(references.map(({ pack, path }) => ({ pack, path })));
+  const packs = new Set(references.map((reference) => reference.pack)).size;
+  write(
+    `References to other packs: ${references.length}${references.length === 0 ? "" : ` (${packs} ${packs === 1 ? "pack" : "packs"}${verdicts === undefined ? "; not asked whether each is there: --references asks a deployment" : ""})`}\n`,
+  );
+  let absent = 0;
+  references.forEach((reference, at) => {
+    const verdict = verdicts?.[at];
+    if (verdict?.found === false) absent += 1;
+    // What is not there is always named; the rest as far as the report names such things.
+    if (at >= NAMED_NOTES && verdict?.found !== false) return;
+    const said =
+      verdict === undefined
+        ? ""
+        : verdict.found === true
+          ? ": there"
+          : verdict.found === false
+            ? ": NOT THERE"
+            : `: not known (${verdict.detail ?? "no answer"})`;
+    write(`- ${reference.pack} ${reference.path} (from ${reference.from})${said}\n`);
+  });
+  if (references.length > NAMED_NOTES) {
+    write(`- ... (${references.length} in all)\n`);
+  }
+  write("\n");
   write(`Index diagnostics: ${diagnostics.length}\n`);
   for (const diagnostic of diagnostics) {
     write(`- ${diagnostic.path} (${diagnostic.code}): ${diagnostic.message}\n`);
@@ -400,10 +461,13 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
         .join("\n")}\n\n`,
   );
 
+  if (absent > 0) {
+    write(`${absent} reference(s) to other packs name a file that is not there\n`);
+  }
   write(
     diagnostics.length === 0
       ? "ok: no index diagnostics\n"
       : `${diagnostics.length} index issue(s) found\n`,
   );
-  return diagnostics.length === 0 ? 0 : 1;
+  return diagnostics.length === 0 && absent === 0 ? 0 : 1;
 }

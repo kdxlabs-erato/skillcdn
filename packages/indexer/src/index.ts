@@ -6,7 +6,12 @@ export {
   INDEX_VERSION,
   MIN_SERVABLE_INDEX_VERSION,
 } from "./build-index.js";
-export { type CheckOptions, checkDirectory } from "./check.js";
+export {
+  type CheckOptions,
+  checkDirectory,
+  type PackReferenceAsked,
+  type PackReferenceVerdict,
+} from "./check.js";
 export { gitBlobHash, sha256Hex } from "./git-hash.js";
 export {
   INDEX_LIMIT_DEFAULTS,

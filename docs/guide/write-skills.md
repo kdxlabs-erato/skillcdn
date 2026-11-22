@@ -82,3 +82,7 @@ An agent finds a skill by its description, through a search or a folder listing,
 A page ends between two blocks where it can: not inside a table or a fenced code block, and not right after a heading or a line that ends in a colon. A table or an example longer than some 4,000 characters is cut all the same, a table after a row with its head said again on the next page, so a block an agent must read in one piece is kept shorter than that.
 
 `skillcdn.translations` in the front-matter gives the page a title and a description in another language, for people; agents keep reading the original, and search matches the original words ([recommended](../specs/skill-repo.md#recommended)).
+
+## Pointing at another pack
+
+A skill that builds on a skill of another pack, or a page that would otherwise copy what another pack says, links to the file by its skill URI: `[the base skill](skill://gh/acme/skills/design/card/SKILL.md)`. Say in the sentence what the reader does with it, `load it first, then apply what differs below`. An agent that loads your skill is told which files it names in other packs and how each is read, and `skillcdn check --references` asks whether each is still there, so that a skill renamed in the other pack fails your check and not your user's task ([the format](../specs/skill-repo.md#markdown-references)). The other pack's file is not copied into yours: the agent reads it at its own pack, with that pack's rules.

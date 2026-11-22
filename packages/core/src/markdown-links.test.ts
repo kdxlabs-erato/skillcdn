@@ -7,6 +7,7 @@ import {
   MAX_LINK_MARKDOWN_LENGTH,
   MAX_MARKDOWN_LINKS,
   MAX_MARKDOWN_REFERENCES,
+  MAX_PACK_LINKS,
   resolveLocalLink,
   resolveMarkdownReference,
 } from "./markdown-links.js";
@@ -292,5 +293,64 @@ describe("Markdown links by what they name", () => {
     expect(inspected.references.length).toBe(1);
     expect(inspected.files.length).toBe(1);
     expect(inspected.truncated).toBe(true);
+  });
+});
+
+describe("links to files of other packs (ADR-0120)", () => {
+  it("takes a skill URI as the destination of a link, and nothing else under another scheme", () => {
+    const { packs, references } = inspectMarkdownLinks(
+      path("skills/card/SKILL.md"),
+      [
+        "Extends [the base](skill://gh/Acme/Skills/design/card/SKILL.md).",
+        "See [a section](skill://gh/acme/skills/docs/guide.md#the-voice) and [it again](skill://gh/acme/skills/docs/guide.md#the-voice).",
+        "A [page of the web](https://example.com/skill://gh/a/b/c.md) and [mail](mailto:a@example.com) are no references.",
+        "![a picture](skill://gh/acme/skills/assets/a.png) is not read as one either.",
+        "`[in code](skill://gh/acme/skills/code.md)` is code.",
+        "A [local page](references/own.md) is a reference of this pack.",
+        "[reference style][base]",
+        "",
+        "[base]: skill://gh/acme/base/README.md",
+      ].join("\n"),
+    );
+    expect(packs).toEqual([
+      // The address is spelled as an address is: a host matched without case is in lower case.
+      {
+        href: "skill://gh/Acme/Skills/design/card/SKILL.md",
+        pack: "gh/acme/skills",
+        path: "design/card/SKILL.md",
+      },
+      {
+        href: "skill://gh/acme/skills/docs/guide.md#the-voice",
+        pack: "gh/acme/skills",
+        path: "docs/guide.md",
+      },
+      { href: "skill://gh/acme/base/README.md", pack: "gh/acme/base", path: "README.md" },
+    ]);
+    expect(references.map((reference) => reference.path)).toEqual([
+      "skills/card/references/own.md",
+    ]);
+  });
+
+  it("keeps a destination under the scheme that is no skill URI, for whoever reports it", () => {
+    const { packs } = inspectMarkdownLinks(
+      path("docs/a.md"),
+      "[no path](skill://gh/acme/skills) [a ref](skill://gh/acme/skills@v1/a.md) [no host](skill://acme/skills/a.md) [up](skill://gh/acme/skills/../x.md)",
+    );
+    expect(packs.map((link) => [link.href, link.pack, link.path])).toEqual([
+      ["skill://gh/acme/skills", undefined, undefined],
+      ["skill://gh/acme/skills@v1/a.md", undefined, undefined],
+      ["skill://acme/skills/a.md", undefined, undefined],
+      ["skill://gh/acme/skills/../x.md", undefined, undefined],
+    ]);
+  });
+
+  it("stops at the bound, without calling the inspection cut", () => {
+    const many = Array.from(
+      { length: MAX_PACK_LINKS + 10 },
+      (_, at) => `[p${at}](skill://gh/acme/skills/docs/p${at}.md)`,
+    ).join(" ");
+    const inspected = inspectMarkdownLinks(path("docs/a.md"), many);
+    expect(inspected.packs).toHaveLength(MAX_PACK_LINKS);
+    expect(inspected.truncated).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 import { splitFrontMatter } from "./front-matter.js";
 import { parentDirectory } from "./repo-layout.js";
 import { MAX_REPO_PATH_LENGTH, type RepoPath, resolveRepoPath } from "./repo-path.js";
+import { parseSkillUri, SKILL_URI_SCHEME, skillUriPrefix } from "./skill-uri.js";
 
 /**
  * Work bounds for untrusted Markdown; these are independent of the repository size. A source
@@ -12,6 +13,8 @@ export const MAX_MARKDOWN_REFERENCES = 200;
 /** How many links to Markdown files one source file records, whatever number of files they name. */
 export const MAX_MARKDOWN_LINKS = 2000;
 export const MAX_LINK_MARKDOWN_LENGTH = 262_144;
+/** How many links to files of other packs one source file records. */
+export const MAX_PACK_LINKS = 50;
 
 export interface MarkdownReference {
   /** The author's destination, including any fragment. */
@@ -38,8 +41,27 @@ export interface MarkdownLink {
   readonly alt?: string;
 }
 
+/**
+ * A link to a file of another pack (ADR-0120): its destination is a skill URI,
+ * `skill://gh/<owner>/<repo>/<path>`, which names the pack and the file in it. The index of a
+ * repository does not look into another, so the link is kept as written and followed by whoever
+ * reads it, at the pack it names.
+ */
+export interface PackLink {
+  /** The author's destination, including any fragment. */
+  readonly href: string;
+  /**
+   * The pack as an address without a ref, `gh/<owner>/<repo>`, and the path of the file in it;
+   * both `undefined` for a destination under the scheme that is not a skill URI.
+   */
+  readonly pack: string | undefined;
+  readonly path: RepoPath | undefined;
+}
+
 /** Every local link of a document, by what it names. */
 export interface MarkdownLinkInspection extends MarkdownReferenceInspection {
+  /** The links to files of other packs, at most {@link MAX_PACK_LINKS}. */
+  readonly packs: readonly PackLink[];
   /** The pictures, `![alt](...)`, with their alternative text. */
   readonly images: readonly MarkdownLink[];
   /** The links to files that are neither Markdown nor pictures: originals, data, scripts. */
@@ -251,6 +273,10 @@ export function inspectMarkdownReferences(
   return { references, truncated };
 }
 
+const SKILL_URI = `${SKILL_URI_SCHEME}://`;
+const isSkillUri = (href: string): boolean =>
+  href.slice(0, SKILL_URI.length).toLowerCase() === SKILL_URI;
+
 /**
  * Every local link in prose, by what it names: the Markdown files, which are the references
  * that extend what is readable; the pictures, with their alternative text; and the other files.
@@ -261,7 +287,7 @@ export function inspectMarkdownReferences(
  */
 export function inspectMarkdownLinks(source: RepoPath, markdown: string): MarkdownLinkInspection {
   if (markdown.length > MAX_LINK_MARKDOWN_LENGTH) {
-    return { references: [], images: [], files: [], truncated: true };
+    return { references: [], images: [], files: [], packs: [], truncated: true };
   }
   const text = prose(markdown);
   const definitions = new Map<string, string>();
@@ -277,6 +303,7 @@ export function inspectMarkdownLinks(source: RepoPath, markdown: string): Markdo
   const references: MarkdownReference[] = [];
   const images: MarkdownLink[] = [];
   const files: MarkdownLink[] = [];
+  const packs: PackLink[] = [];
   const seen = new Set<string>();
   /** The Markdown files the references name: what their limit counts. */
   const referenced = new Set<string>();
@@ -308,7 +335,20 @@ export function inspectMarkdownLinks(source: RepoPath, markdown: string): Markdo
     const key = `${image ? "!" : ""}${href}`;
     if (seen.has(key)) continue;
     const path = resolveLocalLink(source, href);
-    if (path === undefined) continue;
+    if (path === undefined) {
+      // A skill URI names a file of another pack; any other URL is no reference at all.
+      if (!image && isSkillUri(href) && packs.length < MAX_PACK_LINKS) {
+        seen.add(key);
+        const named = parseSkillUri(href.split(/[?#]/, 1)[0] ?? "");
+        packs.push({
+          href,
+          pack:
+            named === undefined ? undefined : skillUriPrefix(named.address).slice(SKILL_URI.length),
+          path: named?.path,
+        });
+      }
+      continue;
+    }
     const list = image ? images : path.toLowerCase().endsWith(".md") ? references : files;
     if (
       list === references
@@ -330,5 +370,5 @@ export function inspectMarkdownLinks(source: RepoPath, markdown: string): Markdo
       files.push({ href, path });
     }
   }
-  return { references, images, files, truncated };
+  return { references, images, files, packs, truncated };
 }
