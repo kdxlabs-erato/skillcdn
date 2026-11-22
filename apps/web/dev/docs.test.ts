@@ -306,7 +306,9 @@ describe("loadDocs", () => {
       // Nothing of the repository's own structure leaks into the site's links.
       expect(docs.content[page.slug]?.body, page.file).not.toMatch(/\]\(\.\.?\//);
     }
-  });
+    // Every document of the repository is read and rendered, which takes longer with each one
+    // written: past the default of five seconds on a machine that runs the other tests beside it.
+  }, 30_000);
 });
 
 /** A glob over a path with `/` separators: `**` crosses directories, `*` and `?` do not. */
