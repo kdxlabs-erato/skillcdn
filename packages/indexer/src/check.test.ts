@@ -76,6 +76,39 @@ describe("checking a working tree", () => {
     );
   });
 
+  it("says in how many pages a skill is read, and what a large one is made of", async () => {
+    const root = await mkdtemp(join(tmpdir(), "skillcdn-check-pages-"));
+    const lines = (count: number) => "A line of forty characters, with its end.\n".repeat(count);
+    const files = {
+      "SKILLCDN.md": "---\ndescription: Pages.\n---\n# Rules\n\nAsk first.\n",
+      "skills/small/SKILL.md": "---\nname: small\ndescription: A small skill.\n---\n# Small\n",
+      "skills/large/SKILL.md":
+        "---\nname: large\ndescription: A large skill.\nskillcdn:\n  include:\n    - references/long.md\n    - references/short.md\n---\n# Large\n\nRead both.\n",
+      // Forty-two bytes a line: a thousand lines are a little under three pages of 16 KiB.
+      "skills/large/references/long.md": lines(1_000),
+      "skills/large/references/short.md": lines(10),
+    };
+    for (const [name, contents] of Object.entries(files)) {
+      const parts = name.split("/");
+      await mkdir(join(root, ...parts.slice(0, -1)), { recursive: true });
+      await writeFile(join(root, ...parts), contents);
+    }
+    const { code, report } = await check(root);
+    // A large skill is a note, never a failure.
+    expect(code).toBe(0);
+    expect(report).toContain(
+      "  context: 27 bytes, read in 1 page (rules 19, instructions 8, included 0)\n",
+    );
+    expect(report).toContain(
+      "  context: 42459 bytes, read in 3 pages (rules 19, instructions 20, included 42420)\n" +
+        "  over the 16384 bytes of instructions and included files a skill aims at; included: skills/large/references/long.md 42000, skills/large/references/short.md 420\n",
+    );
+    expect(report.split("over the 16384 bytes").length).toBe(2);
+    expect(report).toContain(
+      "Notes: 1\n- skills (skill_large): 1 of 2 hold more than 16384 bytes of instructions and included files",
+    );
+  });
+
   it("says when the directory cannot be read", async () => {
     const root = await mkdtemp(join(tmpdir(), "skillcdn-check-missing-"));
     const { code, report } = await check(join(root, "does-not-exist"));

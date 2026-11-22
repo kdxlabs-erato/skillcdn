@@ -156,6 +156,69 @@ export function tableHeadAt(text: string, offset: number): string | undefined {
 }
 
 /**
+ * A page of a context made of several texts read one after another, a skill's rules, its body and
+ * the files it includes: what the page holds of each, from `start` characters into them all and
+ * within `budget` bytes, each text that is cut ended by {@link contextLinesPage}. A text the page
+ * has passed or has not reached is empty in it, and `truncated` where it goes on or is still to
+ * come. The next page begins `consumed` characters further.
+ */
+export function pageOfContext(
+  texts: readonly string[],
+  start: number,
+  budget: number,
+): {
+  readonly parts: readonly { readonly content: string; readonly truncated: boolean }[];
+  readonly consumed: number;
+  /** The length of the whole context, in characters. */
+  readonly total: number;
+  /**
+   * Where the page begins at a row of a table whose first lines the page before had, those
+   * lines ({@link tableHeadAt}): the page begins inside one text at most, the one `start` is in.
+   */
+  readonly tableHead: string | undefined;
+} {
+  let skip = start;
+  let remaining = budget;
+  let consumed = 0;
+  let total = 0;
+  let tableHead: string | undefined;
+  const parts = texts.map((text) => {
+    total += text.length;
+    if (skip >= text.length) {
+      skip -= text.length;
+      return { content: "", truncated: false };
+    }
+    const offset = skip;
+    skip = 0;
+    if (remaining <= 0) return { content: "", truncated: text.length > 0 };
+    // A text that begins late on a page with no place to stop in reach begins the next.
+    const part = contextLinesPage(text, offset, remaining, { mayBeEmpty: consumed > 0 });
+    if (offset > 0 && part.content.length > 0) tableHead = tableHeadAt(text, offset);
+    // A deferred character must precede every later text on the next page.
+    remaining = part.more ? 0 : remaining - part.bytes;
+    consumed += part.content.length;
+    return { content: part.content, truncated: part.more };
+  });
+  return { parts, consumed, total, tableHead };
+}
+
+/**
+ * In how many pages of `budget` bytes a context is read from its first character to its last:
+ * what {@link pageOfContext} cuts it into, counted. At least one, for a context of nothing.
+ */
+export function countContextPages(texts: readonly string[], budget: number): number {
+  let pages = 0;
+  let start = 0;
+  for (;;) {
+    const page = pageOfContext(texts, start, budget);
+    pages += 1;
+    start += page.consumed;
+    // A page that holds nothing cannot be read on from: counted, and the last.
+    if (start >= page.total || page.consumed === 0) return pages;
+  }
+}
+
+/**
  * A page of text to be read on: {@link contextPage}, ended where a reader can stop. Where the text
  * goes on after the page, the page ends between two blocks of Markdown when it can
  * ({@link lastBlockEnd}) within {@link BLOCK_REACH} characters of where the bytes run out and no

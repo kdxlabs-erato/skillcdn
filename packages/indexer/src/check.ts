@@ -7,6 +7,7 @@ import {
   type CatalogFile,
   catalogGroups,
   classifyRepoFile,
+  countContextPages,
   describeLicense,
   FIND_LIST_SKILLS_MAX,
   fitInstructions,
@@ -17,10 +18,12 @@ import {
   isWithinRepoPath,
   type MountCatalog,
   outlineMarkdown,
+  parentDirectory,
   parseRepoPath,
   READ_FILE_DEFAULT_LIMIT,
   type RepoPath,
   ROOT_PATH,
+  SKILL_PAGE_BYTES,
   sectionsOf,
   skillUriPrefix,
   splitFrontMatter,
@@ -43,6 +46,8 @@ export interface CheckOptions {
 const NAMED_NOT_SERVED = 12;
 /** How many notes the report lists in full. */
 const NAMED_NOTES = 12;
+/** How many of the files a large skill includes the report names, the largest first. */
+const NAMED_INCLUDES = 8;
 
 function pathOf(text: string): RepoPath {
   const parsed = parseRepoPath(text);
@@ -169,8 +174,56 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
   write(
     `Skills: ${skills.length}${skills.length === 0 ? "" : ` (${listed.length} listed through the MCP skills extension${copies === 0 ? "" : `; ${copies} hidden or duplicate copies, loadable by exact path only`})`}\n`,
   );
+  // What an author may want to know and nothing is wrong with: a note never fails the check.
+  const notes: string[] = [];
+  const bytesOf = (text: string): number => Buffer.byteLength(text, "utf8");
+  let large = 0;
   for (const skill of skills) {
     const directory = skill.skillDir ?? "";
+    // What an agent reads before it starts (docs/specs/tools.md): the rules above the skill, its
+    // body and the files it includes, cut into pages by the function the reader cuts them with.
+    const source = await blobs.read(skill.blobSha);
+    const split = source === undefined ? undefined : splitFrontMatter(source);
+    const body = split?.kind === "found" ? split.body : (source ?? "");
+    const above = index.entries
+      .filter(
+        (entry) =>
+          entry.kind === "manifest" &&
+          entry.frontMatter?.manifestError === undefined &&
+          isWithinRepoPath(parentDirectory(pathOf(entry.path)), pathOf(directory)),
+      )
+      .sort((a, b) => a.path.length - b.path.length);
+    const ruleTexts = (await Promise.all(above.map(rulesOf))).filter((text) => text.length > 0);
+    const includedTexts = await Promise.all(
+      (skill.frontMatter?.include ?? []).map(async (path) => {
+        const entry = index.entries.find((candidate) => candidate.path === path);
+        const text =
+          entry?.kind === "markdown" || entry?.kind === "json"
+            ? await blobs.read(entry.blobSha)
+            : undefined;
+        return { path, bytes: text === undefined ? 0 : bytesOf(text), text: text ?? "" };
+      }),
+    );
+    const ruleBytes = ruleTexts.reduce((sum, text) => sum + bytesOf(text), 0);
+    const includedBytes = includedTexts.reduce((sum, file) => sum + file.bytes, 0);
+    const pages = countContextPages(
+      [...ruleTexts, body, ...includedTexts.map((file) => file.text)],
+      SKILL_PAGE_BYTES,
+    );
+    // The authoring target is the body and what it includes, before the rules above it
+    // (docs/specs/skill-repo.md): past it, the author sees what the skill is made of.
+    const carried = bytesOf(body) + includedBytes;
+    if (carried > SKILL_PAGE_BYTES) large += 1;
+    const largest = [...includedTexts].sort((a, b) => b.bytes - a.bytes).slice(0, NAMED_INCLUDES);
+    const made =
+      largest.length === 0
+        ? ""
+        : `; included: ${largest.map((file) => `${file.path} ${file.bytes}`).join(", ")}${includedTexts.length > largest.length ? `, and ${includedTexts.length - largest.length} smaller` : ""}`;
+    const context =
+      `  context: ${ruleBytes + carried} bytes, read in ${pages} ${pages === 1 ? "page" : "pages"} (rules ${ruleBytes}, instructions ${bytesOf(body)}, included ${includedBytes})\n` +
+      (carried <= SKILL_PAGE_BYTES
+        ? ""
+        : `  over the ${SKILL_PAGE_BYTES} bytes of instructions and included files a skill aims at${made}\n`);
     const owned = index.entries.filter(
       (entry) => entry.visible && entry.skillDir === directory && entry.kind !== "skill",
     );
@@ -192,6 +245,7 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
           ? ""
           : `  over the read limit, named in the served document with their source: ${omitted.map((file) => `${file.path} (${file.size} bytes)`).join(", ")}\n`) +
         `  extension: ${skill.listed === true ? `listed, ${skill.servedSize ?? 0} bytes as served` : `not listed (${skill.frontMatter?.unlisted ?? "unknown"})`}\n` +
+        context +
         (license === undefined
           ? ""
           : `  license: ${describeLicense(license)}${license.kind === "restrictive" ? " (described only, unless the repository is verified)" : ""}\n`) +
@@ -204,8 +258,11 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
   // A document's sections are what a search names and what `browse_repo` outlines (ADR-0063):
   // the author sees how many a document has.
   write(`Documents outside the skills: ${documents.length}\n`);
-  // What an author may want to know and nothing is wrong with: a note never fails the check.
-  const notes: string[] = [];
+  if (large > 0) {
+    notes.push(
+      `skills (skill_large): ${large} of ${skills.length} hold more than ${SKILL_PAGE_BYTES} bytes of instructions and included files, what a skill is read in at once; each says under its name what it is made of. An agent reads every page before it starts: what not every run needs is linked from the step that needs it, not included`,
+    );
+  }
   for (const document of documents) {
     const text = document.kind === "markdown" ? await blobs.read(document.blobSha) : undefined;
     const outline = text === undefined ? undefined : outlineMarkdown(text);

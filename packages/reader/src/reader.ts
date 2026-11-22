@@ -10,7 +10,6 @@ import {
   type CodeResult,
   catalogGroups,
   classifyRepoFile,
-  contextLinesPage,
   DATA_CODE_DEFAULT_LIMIT,
   DATA_PAGE_MAX_CHARS,
   DATA_PAGE_MAX_FILES,
@@ -71,6 +70,7 @@ import {
   NO_LICENSE,
   type OutlineHeading,
   outlineMarkdown,
+  pageOfContext,
   pageOfText,
   parentDirectory,
   parseFrontMatter,
@@ -106,7 +106,6 @@ import {
   skillDocumentInput,
   skillUriPrefix,
   splitFrontMatter,
-  tableHeadAt,
 } from "@skillcdn/core";
 import {
   continuationKey,
@@ -1950,46 +1949,31 @@ export class Reader<M extends MountContext = MountContext> {
       ),
     );
     const make = (pageBytes: number): SkillResult => {
-      let skip = start;
-      let remaining = pageBytes;
-      let consumed = 0;
-      let total = 0;
-      // The page begins inside one text at most, the one the cursor stands in: where that is a
-      // table whose first lines the page before had, its head goes with the page (ADR-0118).
-      let tableHead: string | undefined;
-      const page = (text: string): { content: string; truncated: boolean } => {
-        total += text.length;
-        if (skip >= text.length) {
-          skip -= text.length;
-          return { content: "", truncated: false };
-        }
-        const offset = skip;
-        skip = 0;
-        if (remaining <= 0) return { content: "", truncated: text.length > 0 };
-        // A section cut by the page ends between two blocks where it can, and after a line
-        // otherwise; one that begins late on a page with no such place in reach begins the next.
-        const part = contextLinesPage(text, offset, remaining, { mayBeEmpty: consumed > 0 });
-        if (offset > 0 && part.content.length > 0) tableHead = tableHeadAt(text, offset);
-        // A deferred character must precede every later section on the next page.
-        remaining = part.more ? 0 : remaining - part.bytes;
-        consumed += part.content.length;
-        return { content: part.content, truncated: part.more };
-      };
-      const pagedRules = ruleChain.flatMap((rule) => {
-        const part = page(rule.body);
+      // The rules, the body and the included files are one context, read in that order; the
+      // page is cut from it by the function `check` counts a skill's pages with.
+      const { parts, consumed, total, tableHead } = pageOfContext(
+        [
+          ...ruleChain.map((rule) => rule.body),
+          split.kind === "found" ? split.body : text,
+          ...included.map((file) => file.content ?? ""),
+        ],
+        start,
+        pageBytes,
+      );
+      const partAt = (at: number): { content: string; truncated: boolean } =>
+        parts[at] ?? { content: "", truncated: false };
+      const pagedRules = ruleChain.flatMap((rule, at) => {
+        const part = partAt(at);
         return part.content.length === 0
           ? []
           : [{ ...rule, body: part.content, truncated: part.truncated }];
       });
-      const body = page(split.kind === "found" ? split.body : text).content;
-      const pagedIncluded = included.map((file) =>
-        file.content === undefined
-          ? file
-          : (() => {
-              const part = page(file.content);
-              return { ...file, content: part.content, truncated: part.truncated };
-            })(),
-      );
+      const body = partAt(ruleChain.length).content;
+      const pagedIncluded = included.map((file, at) => {
+        if (file.content === undefined) return file;
+        const part = partAt(ruleChain.length + 1 + at);
+        return { ...file, content: part.content, truncated: part.truncated };
+      });
       const nextCursor =
         contextAvailable && start + consumed < total
           ? nextContinuation(key, start + consumed)
