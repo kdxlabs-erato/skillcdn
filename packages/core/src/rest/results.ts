@@ -428,6 +428,7 @@ export function skillResultOf(
     metadata: { ...skill.metadata },
     body: skill.body,
     ...(skill.tableHead === undefined ? {} : { tableHead: skill.tableHead }),
+    ...(skill.pagesLeft === undefined ? {} : { pagesLeft: skill.pagesLeft }),
     files: skill.files.flatMap((file) => {
       const filePath = pathOf(file);
       return filePath === undefined ? [] : [filePath];

@@ -10,6 +10,7 @@ import {
   type CodeResult,
   catalogGroups,
   classifyRepoFile,
+  countContextPages,
   DATA_CODE_DEFAULT_LIMIT,
   DATA_PAGE_MAX_CHARS,
   DATA_PAGE_MAX_FILES,
@@ -1972,18 +1973,15 @@ export class Reader<M extends MountContext = MountContext> {
         }
       }
     }
+    // The rules, the body and the included files are one context, read in that order.
+    const context = [
+      ...ruleChain.map((rule) => rule.body),
+      split.kind === "found" ? split.body : text,
+      ...included.map((file) => file.content ?? ""),
+    ];
     const make = (pageBytes: number): SkillResult => {
-      // The rules, the body and the included files are one context, read in that order; the
-      // page is cut from it by the function `check` counts a skill's pages with.
-      const { parts, consumed, total, tableHead } = pageOfContext(
-        [
-          ...ruleChain.map((rule) => rule.body),
-          split.kind === "found" ? split.body : text,
-          ...included.map((file) => file.content ?? ""),
-        ],
-        start,
-        pageBytes,
-      );
+      // The page is cut from the context by the function `check` counts a skill's pages with.
+      const { parts, consumed, total, tableHead } = pageOfContext(context, start, pageBytes);
       const partAt = (at: number): { content: string; truncated: boolean } =>
         parts[at] ?? { content: "", truncated: false };
       const pagedRules = ruleChain.flatMap((rule, at) => {
@@ -2019,6 +2017,13 @@ export class Reader<M extends MountContext = MountContext> {
         metadata: skill.frontMatter?.metadata ?? {},
         body,
         ...(tableHead === undefined ? {} : { tableHead }),
+        // How much is left, for a skill read in more than one page: the pages a reader that
+        // goes on will be given, counted as they will be cut (ADR-0123).
+        ...(nextCursor !== undefined
+          ? { pagesLeft: countContextPages(context, SKILL_PAGE_BYTES, start + consumed) }
+          : contextAvailable && start > 0
+            ? { pagesLeft: 0 }
+            : {}),
         files: files
           .slice(0, MAX_LISTED_SKILL_FILES)
           .map((file) => belowMount(mount, file))

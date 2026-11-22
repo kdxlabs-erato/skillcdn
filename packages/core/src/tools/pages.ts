@@ -62,5 +62,8 @@ export function joinSkillPages(pages: readonly SkillResult[]): SkillResult | und
     rules: ruleChain[0],
     complete: last.complete,
     nextCursor: last.nextCursor,
+    // What is left after the last of the pages joined; a skill joined to its end has no page left
+    // to count, and is not one read in pages.
+    pagesLeft: last.nextCursor === undefined ? undefined : last.pagesLeft,
   };
 }

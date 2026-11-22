@@ -16,6 +16,7 @@ import {
 import {
   describeSource,
   INDEXING_NOTICE,
+  MCP_TOOL_WORDS,
   PROVENANCE_NOTICE,
   renderBrowseResult,
   renderDiagnostics,
@@ -622,6 +623,62 @@ describe("rendering", () => {
         "(Not at hand here; read_repo_file has it.)",
       ].join("\n"),
     );
+  });
+
+  it("says how many pages are left, and ends a page with the call that reads the next (ADR-0123)", () => {
+    const text = renderSkillResult(
+      skillResult({
+        path: path("SKILL.md"),
+        complete: false,
+        nextCursor: "next-page",
+        pagesLeft: 3,
+      }),
+    );
+    const call = 'load_skill with path "SKILL.md" and cursor "next-page"';
+    expect(text).toContain(
+      `Skill context is incomplete. 3 more pages follow this one. Continue ${call} before using it.`,
+    );
+    // The end of the page is what a reader has just read: the call is there once more.
+    expect(
+      text.endsWith(
+        `This page ends before the skill does: 3 more pages follow this one, and what follows is part of its instructions. Do not use the skill or answer from it yet: continue ${call}, and go on until a page says the skill is complete.`,
+      ),
+    ).toBe(true);
+    const one = renderSkillResult(
+      skillResult({
+        path: path("SKILL.md"),
+        complete: false,
+        nextCursor: "next-page",
+        pagesLeft: 1,
+      }),
+    );
+    expect(one).toContain("Skill context is incomplete. 1 more page follows this one. Continue");
+    expect(one).toContain("This page ends before the skill does: 1 more page follows this one,");
+    // The last page of a skill read in several says that it is the last.
+    const last = renderSkillResult(skillResult({ complete: true, pagesLeft: 0 }));
+    expect(last.endsWith("Skill context is complete: this was its last page.")).toBe(true);
+    // A skill read in one page says nothing of pages, and one that cannot go on says why.
+    const whole = renderSkillResult(skillResult({ complete: true }));
+    expect(whole).not.toContain("page");
+    const stuck = renderSkillResult(skillResult({ complete: false, nextCursor: undefined }));
+    expect(stuck).toContain(
+      "Skill context is incomplete. Resolve the warnings before using this skill.",
+    );
+    expect(stuck).not.toContain("This page ends before the skill does");
+    // A part the command prints is a run of pages: it counts none, and names its own next read.
+    const part = renderSkillResult(
+      skillResult({
+        path: path("SKILL.md"),
+        complete: false,
+        nextCursor: "next-page",
+        pagesLeft: 3,
+      }),
+      { ...MCP_TOOL_WORDS, load: "skillcdn skill", piece: "part" },
+    );
+    expect(part).toContain(
+      'Skill context is incomplete. Continue skillcdn skill with path "SKILL.md" and cursor "next-page" before using it.',
+    );
+    expect(part).not.toContain("more pages follow");
   });
 
   it("relays the allowed tools and the metadata of a skill", () => {

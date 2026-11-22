@@ -250,6 +250,7 @@ describe("repository-root publication and progressive loading", () => {
     let allIncluded = "";
     let allRules = "";
     let count = 0;
+    const left: number[] = [];
     do {
       const result = await client.callTool({
         name: "load_skill",
@@ -268,10 +269,28 @@ describe("repository-root publication and progressive loading", () => {
       }
       cursor = continuationOf(text);
       expect(text.includes("Skill context is incomplete.")).toBe(cursor !== undefined);
+      // A page says how many follow it, at its head and at its end with the call that reads the
+      // next, and the last says that the skill is complete (ADR-0123).
+      if (cursor === undefined) {
+        expect(text.endsWith("Skill context is complete: this was its last page.")).toBe(true);
+      } else {
+        const follow = /^Skill context is incomplete\. (\d+ more pages? follows? this one)\./m.exec(
+          text,
+        )?.[1];
+        expect(follow).toBeDefined();
+        expect(
+          text.endsWith(
+            `This page ends before the skill does: ${follow}, and what follows is part of its instructions. Do not use the skill or answer from it yet: continue load_skill with path ${JSON.stringify(path)} and cursor ${JSON.stringify(cursor)}, and go on until a page says the skill is complete.`,
+          ),
+        ).toBe(true);
+        left.push(Number(follow?.split(" ")[0]));
+      }
       count += 1;
       expect(count).toBeLessThan(10);
     } while (cursor !== undefined);
     expect(count).toBeGreaterThan(1);
+    // The pages that follow are counted down to the last.
+    expect(left).toEqual(Array.from({ length: count - 1 }, (_, at) => count - 1 - at));
     expect(allBody).toBe(body);
     expect(allIncluded).toBe(required);
     expect(allRules).toBe("Use the common editorial rules.");

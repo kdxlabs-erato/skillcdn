@@ -495,6 +495,11 @@ export const restSkillSchema = z.discriminatedUnion("status", [
        * page before had, for whoever shows the page alone (ADR-0118). Not part of the text.
        */
       tableHead: z.optional(z.string()),
+      /**
+       * On a page of a skill read in more than one: in how many more pages the rest of its
+       * context is read, 0 on the last (ADR-0123).
+       */
+      pagesLeft: z.optional(count),
       files: z.array(z.string()),
       filesTruncated: z.boolean(),
       /**

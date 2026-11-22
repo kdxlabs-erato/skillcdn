@@ -25,14 +25,16 @@ const utf8Size = (point: number): number =>
   point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
 
 /**
- * How far before the bytes run out a page may end, to end between two blocks of the text and not
- * inside one: the length of a table or of an example of code.
+ * How many bytes before they run out a page may end, to end between two blocks of the text and
+ * not inside one: a quarter of a page of a skill, the length of a table or of an example of code.
+ * Bytes, as the page itself is counted, so that a page gives up the same share of itself in every
+ * script: characters of three bytes each fill a page three times as fast.
  */
-const BLOCK_REACH = 4_096;
-/** How far before the bytes run out a page may end, to end after a line: a long paragraph's worth. */
-const LINE_REACH = 2_048;
-/** How far before the bytes run out a page without such a line may end, to end between two words. */
+export const CONTEXT_BLOCK_REACH = 4_096;
+/** How many bytes before they run out a line longer than a page is cut, to be cut between two words. */
 const WORD_REACH = 256;
+/** How many characters back a page looks for one that does not join the character before it. */
+const JOINED_BACK = 32;
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
@@ -103,15 +105,41 @@ function continuesTable(text: string, start: number): boolean {
 }
 
 /**
- * The last line end after `offset`, within `reach` characters of `hard`, where a reader of a
- * Markdown text can stop: outside a code block and a table, and not right after a heading or a
+ * The earliest place in `text` that is no more than `bytes` bytes before `hard`, and not before
+ * `offset`: how far back a reach of that many bytes goes.
+ */
+function floorWithin(text: string, offset: number, hard: number, bytes: number): number {
+  let floor = hard;
+  let counted = 0;
+  while (floor > offset) {
+    const start = previousCharacter(text, offset, floor);
+    const size = utf8Size(text.codePointAt(start) ?? 0);
+    if (counted + size > bytes) break;
+    counted += size;
+    floor = start;
+  }
+  return floor;
+}
+
+/** Where the character that ends before `end` begins: two units back for a pair of surrogates. */
+function previousCharacter(text: string, offset: number, end: number): number {
+  const low = text.charCodeAt(end - 1);
+  const high = text.charCodeAt(end - 2);
+  return end - 2 >= offset && low >= 0xdc00 && low <= 0xdfff && high >= 0xd800 && high <= 0xdbff
+    ? end - 2
+    : end - 1;
+}
+
+/**
+ * The last line end after `offset` and no earlier than `floor`, before `hard`, where a reader of
+ * a Markdown text can stop: outside a code block and a table, and not right after a heading or a
  * line that announces what follows. `undefined` when there is none.
  */
 function lastBlockEnd(
   text: string,
   offset: number,
   hard: number,
-  reach: number,
+  floor: number,
 ): number | undefined {
   const state: Blocks = { fence: undefined, table: undefined, last: "text" };
   let best: number | undefined;
@@ -123,7 +151,7 @@ function lastBlockEnd(
     readLine(state, text, start, line, end);
     if (
       end > offset &&
-      hard - end <= reach &&
+      end >= floor &&
       state.fence === undefined &&
       state.last === "text" &&
       !(state.table !== undefined && continuesTable(text, end))
@@ -133,6 +161,55 @@ function lastBlockEnd(
     start = end;
   }
   return best;
+}
+
+/** Whether the line that begins at `start` is no more than `budget` bytes, its line end counted. */
+function lineFits(text: string, start: number, budget: number): boolean {
+  let bytes = 0;
+  for (let at = start; at < text.length; ) {
+    const point = text.codePointAt(at) ?? 0;
+    bytes += utf8Size(point);
+    if (bytes > budget) return false;
+    if (point === 0x0a) return true;
+    at += point > 0xffff ? 2 : 1;
+  }
+  return true;
+}
+
+const MARK = /^\p{M}$/u;
+
+/**
+ * Whether a character is read as part of the one before it: a combining mark, a joiner or a
+ * selector of how the one before is shown, the vowel or the final consonant of a Hangul syllable
+ * written in its letters, the tone of skin of an emoji.
+ */
+function joinsBack(point: number): boolean {
+  return (
+    point === 0x200d ||
+    (point >= 0xfe00 && point <= 0xfe0f) ||
+    (point >= 0x1160 && point <= 0x11ff) ||
+    (point >= 0xd7b0 && point <= 0xd7ff) ||
+    (point >= 0x1f3fb && point <= 0x1f3ff) ||
+    MARK.test(String.fromCodePoint(point))
+  );
+}
+
+/**
+ * Where a line longer than a page is cut, at or before `hard` and after `from`, where the page
+ * has the line from: after its last space within {@link WORD_REACH} bytes, else where the bytes
+ * run out, a little earlier where the next character would be read as part of the last one, so
+ * that what a reader sees as one character is on one page. A run of such characters longer than
+ * a page looks back over is cut as it is.
+ */
+function wordEnd(text: string, from: number, hard: number): number {
+  const space = text.lastIndexOf(" ", hard - 1) + 1;
+  if (space > from && space >= floorWithin(text, from, hard, WORD_REACH)) return space;
+  let end = hard;
+  for (let back = 0; back < JOINED_BACK && end > from && end < text.length; back += 1) {
+    if (!joinsBack(text.codePointAt(end) ?? 0) && text.charCodeAt(end - 1) !== 0x200d) return end;
+    end = previousCharacter(text, from, end);
+  }
+  return hard;
 }
 
 /**
@@ -192,7 +269,10 @@ export function pageOfContext(
     skip = 0;
     if (remaining <= 0) return { content: "", truncated: text.length > 0 };
     // A text that begins late on a page with no place to stop in reach begins the next.
-    const part = contextLinesPage(text, offset, remaining, { mayBeEmpty: consumed > 0 });
+    const part = contextLinesPage(text, offset, remaining, {
+      mayBeEmpty: consumed > 0,
+      pageBytes: budget,
+    });
     if (offset > 0 && part.content.length > 0) tableHead = tableHeadAt(text, offset);
     // A deferred character must precede every later text on the next page.
     remaining = part.more ? 0 : remaining - part.bytes;
@@ -203,42 +283,129 @@ export function pageOfContext(
 }
 
 /**
- * In how many pages of `budget` bytes a context is read from its first character to its last:
- * what {@link pageOfContext} cuts it into, counted. At least one, for a context of nothing.
+ * In how many pages of `budget` bytes a context is read from `start` characters into it to its
+ * last character: what {@link pageOfContext} cuts it into, counted. At least one, for a context
+ * of nothing.
  */
-export function countContextPages(texts: readonly string[], budget: number): number {
+export function countContextPages(texts: readonly string[], budget: number, start = 0): number {
   let pages = 0;
-  let start = 0;
+  let at = start;
   for (;;) {
-    const page = pageOfContext(texts, start, budget);
+    const page = pageOfContext(texts, at, budget);
     pages += 1;
-    start += page.consumed;
+    at += page.consumed;
     // A page that holds nothing cannot be read on from: counted, and the last.
-    if (start >= page.total || page.consumed === 0) return pages;
+    if (at >= page.total || page.consumed === 0) return pages;
   }
 }
 
 /**
- * A page of text to be read on: {@link contextPage}, ended where a reader can stop. Where the text
- * goes on after the page, the page ends between two blocks of Markdown when it can
- * ({@link lastBlockEnd}) within {@link BLOCK_REACH} characters of where the bytes run out and no
- * further back than half of what it could hold; else after its last line end within
- * {@link LINE_REACH}, else after its last space within {@link WORD_REACH}, else where the bytes
- * run out. The next page begins where this one ends, so the pages are the text and nothing of it
- * twice.
+ * What a page ends inside, where it does not end between two blocks: a line, a fenced code
+ * block, a table that goes on with one more row, or the opening of what follows, right after a
+ * heading or a line that announces it.
+ */
+export type ContextCut = "line" | "code" | "table" | "opening";
+
+/**
+ * What a page that ends `end` characters into a Markdown text ends inside ({@link ContextCut}).
+ * `undefined` between two blocks, and at either end of the text.
+ */
+export function contextCutAt(text: string, end: number): ContextCut | undefined {
+  if (end <= 0 || end >= text.length) return undefined;
+  if (text[end - 1] !== "\n") return "line";
+  const state: Blocks = { fence: undefined, table: undefined, last: "text" };
+  let start = 0;
+  while (start < end) {
+    const read = lineAt(text, start);
+    readLine(state, text, start, read.line, read.end);
+    start = read.end;
+  }
+  if (state.fence !== undefined) return "code";
+  if (state.table !== undefined && continuesTable(text, end)) return "table";
+  return state.last === "text" ? undefined : "opening";
+}
+
+/**
+ * Where the pages of a context end inside something ({@link ContextCut}), for whoever writes the
+ * texts: the pages {@link pageOfContext} cuts the context into, and of each that ends elsewhere
+ * than between two blocks or two texts, which page it is, counted from one, which of the texts it
+ * ends in and how many characters into it, the line of that text the next page begins with or
+ * in, counted from one, and what it ends inside.
+ */
+export function contextPageCuts(
+  texts: readonly string[],
+  budget: number,
+): readonly {
+  readonly page: number;
+  readonly text: number;
+  readonly offset: number;
+  readonly line: number;
+  readonly inside: ContextCut;
+}[] {
+  const cuts: {
+    page: number;
+    text: number;
+    offset: number;
+    line: number;
+    inside: ContextCut;
+  }[] = [];
+  let start = 0;
+  for (let page = 1; ; page += 1) {
+    const { consumed, total } = pageOfContext(texts, start, budget);
+    start += consumed;
+    if (start >= total || consumed === 0) return cuts;
+    // The text the next page begins in, and how far into it.
+    let offset = start;
+    for (const [at, text] of texts.entries()) {
+      if (offset >= text.length) {
+        offset -= text.length;
+        continue;
+      }
+      const inside = contextCutAt(text, offset);
+      if (inside !== undefined) {
+        let line = 1;
+        for (let found = text.indexOf("\n"); found !== -1 && found < offset; ) {
+          line += 1;
+          found = text.indexOf("\n", found + 1);
+        }
+        cuts.push({ page, text: at, offset, line, inside });
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * A page of text to be read on: {@link contextPage}, ended where a reader can stop. Where the
+ * text goes on after the page, the page ends, in this order of what it finds:
+ *
+ * 1. between two blocks of Markdown ({@link lastBlockEnd}), within {@link CONTEXT_BLOCK_REACH}
+ *    bytes of where the bytes run out and no further back than half of what the page could hold;
+ * 2. after its last line end, however far back, when the line the bytes run out in is one a page
+ *    of `pageBytes` holds whole: a line is the least a text is made of, and one cut in two is a
+ *    row with half its cells or a link with half its address, which nothing said on the next
+ *    page mends;
+ * 3. after its last space within {@link WORD_REACH} bytes, else where the bytes run out
+ *    ({@link wordEnd}): only a line longer than a page is cut so.
+ *
+ * The next page begins where this one ends, so the pages are the text and nothing of it twice.
  *
  * With `mayBeEmpty`, for a text that begins on a page that already holds something: the half does
  * not bound the reach, since the page is not left short by what it gives up of a text it holds
  * other text before, and a block shorter than the reach is not cut for beginning in the first
- * half of the little the page could hold. When no such place is in what the page could hold of
- * the text, and that is no more than {@link BLOCK_REACH}, the page takes nothing of it, and the
- * next page begins with it.
+ * half of the little the page could hold. The page takes nothing of the text, and the next page
+ * begins with it, when no place of 1 is in what the page could hold of it and that is no more
+ * than {@link CONTEXT_BLOCK_REACH}, and when its first line does not fit what is left of the page
+ * and fits a page.
+ *
+ * `pageBytes` is what a page holds, `budget` where none is given: what is left of a page that
+ * holds other text is less.
  */
 export function contextLinesPage(
   text: string,
   offset: number,
   budget: number,
-  options: { readonly mayBeEmpty?: boolean } = {},
+  options: { readonly mayBeEmpty?: boolean; readonly pageBytes?: number } = {},
 ): {
   readonly content: string;
   readonly bytes: number;
@@ -247,26 +414,31 @@ export function contextLinesPage(
   const page = contextPage(text, offset, budget);
   if (!page.more) return page;
   const length = page.content.length;
+  const hard = offset + length;
   const late = options.mayBeEmpty === true;
-  const mayBeEmpty = late && length <= BLOCK_REACH;
   const block = lastBlockEnd(
     text,
     offset,
-    offset + length,
-    Math.min(BLOCK_REACH, late ? length : length >> 1),
+    hard,
+    floorWithin(
+      text,
+      offset,
+      hard,
+      Math.min(CONTEXT_BLOCK_REACH, late ? page.bytes : page.bytes >> 1),
+    ),
   );
   const line = page.content.lastIndexOf("\n") + 1;
-  const space = page.content.lastIndexOf(" ") + 1;
-  const end =
-    block !== undefined
-      ? block - offset
-      : mayBeEmpty
-        ? 0
-        : line > 0 && length - line <= LINE_REACH
-          ? line
-          : space > 0 && length - space <= WORD_REACH
-            ? space
-            : length;
+  let end: number;
+  if (block !== undefined) {
+    end = block - offset;
+  } else if (late && page.bytes <= CONTEXT_BLOCK_REACH) {
+    end = 0;
+  } else if ((line > 0 || late) && lineFits(text, offset + line, options.pageBytes ?? budget)) {
+    end = line;
+  } else {
+    // The line the bytes run out in is the one that is cut, not a line before it.
+    end = wordEnd(text, offset + line, hard) - offset;
+  }
   if (end === length) return page;
   let bytes = 0;
   for (const character of page.content.slice(0, end)) {

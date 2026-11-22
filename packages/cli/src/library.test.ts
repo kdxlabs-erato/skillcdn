@@ -92,6 +92,47 @@ describe("the reads of a pack as a library", () => {
     expect(code.text).toContain("--- docs/codes.md > Codes (sh) ---\necho codes\n");
   });
 
+  it("answers on every page of a long skill how many pages are left (ADR-0123)", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "skillcdn-library-pages-"));
+    const root = join(parent, "acme-skills");
+    const files: Record<string, string> = {
+      // Fifty-one bytes a paragraph: nine hundred are a little under three pages of 16 KiB.
+      "marketing/long/SKILL.md": `---\nname: long\ndescription: A long skill.\n---\n# Long\n\n${"A paragraph of the long skill, read on every run.\n\n".repeat(900)}`,
+      "marketing/short/SKILL.md": "---\nname: short\ndescription: A short one.\n---\n# Short\n",
+    };
+    for (const [file, text] of Object.entries(files)) {
+      const parts = file.split("/");
+      await mkdir(join(root, ...parts.slice(0, -1)), { recursive: true });
+      await writeFile(join(root, ...parts), text);
+    }
+    const pack = await openDirectory({ directory: root, limits: INDEX_LIMIT_DEFAULTS });
+    if ("error" in pack) throw new Error("the directory is a pack");
+    const left: (number | undefined)[] = [];
+    let cursor: string | undefined;
+    for (let read = 0; read < 10; read += 1) {
+      const body = await pack.skill("marketing/long/SKILL.md", cursor);
+      if (body.status !== "ready") throw new Error("the skill is there");
+      left.push(body.skill.pagesLeft);
+      if (body.skill.complete || body.skill.nextCursor === undefined) break;
+      cursor = body.skill.nextCursor ?? undefined;
+    }
+    // Each page counts the pages after it, and the last says that there is none.
+    expect(left).toEqual([2, 1, 0]);
+    const short = await pack.skill("marketing/short/SKILL.md");
+    if (short.status !== "ready") throw new Error("the skill is there");
+    // A skill read in one page is not one read in pages.
+    expect(short.skill.pagesLeft).toBeUndefined();
+    // Read whole, as the command reads one, it has no page left to count either.
+    const whole = await readPack(
+      pack,
+      { read: "skill", path: "marketing/long/SKILL.md" },
+      {
+        json: true,
+      },
+    );
+    expect(JSON.parse(whole.text).skill.pagesLeft).toBeUndefined();
+  });
+
   it("stops reading a pack that pages without end, or answers the same page again", async () => {
     const { pack } = await directoryPack();
     let asked = 0;

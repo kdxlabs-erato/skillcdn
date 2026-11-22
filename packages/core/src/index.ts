@@ -33,8 +33,11 @@ export {
 export { browseCatalogFiles, type CatalogFile, folderOverview } from "./browse-tree.js";
 export { decodeText } from "./bytes.js";
 export {
+  CONTEXT_BLOCK_REACH,
+  type ContextCut,
   contextLinesPage,
   contextPage,
+  contextPageCuts,
   countContextPages,
   pageOfContext,
   tableHeadAt,

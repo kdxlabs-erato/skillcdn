@@ -434,6 +434,7 @@ export function skillOutcome(
             metadata: { ...skill.metadata },
             body: skill.body,
             ...(skill.tableHead === undefined ? {} : { tableHead: skill.tableHead }),
+            ...(skill.pagesLeft === undefined ? {} : { pagesLeft: skill.pagesLeft }),
             files: [...skill.files],
             filesTruncated: skill.filesTruncated,
             ...(skill.oversized === undefined ? {} : { oversized: [...skill.oversized] }),

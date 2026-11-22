@@ -697,11 +697,22 @@ export function renderSkillResult(result: SkillResult, words: ToolWords = MCP_TO
     result.path ?? `${result.directory.length === 0 ? "" : `${result.directory}/`}SKILL.md`;
   const unlisted = result.referencesUnlisted;
   const folder = `${words.browse} ${JSON.stringify({ path: result.directory })}`;
+  // How many pages are left is said where the reads are pages: a part the command prints is
+  // a run of them, and the command says itself what reads the next.
+  const left = words.piece === undefined ? result.pagesLeft : undefined;
+  const follow =
+    left === undefined || left === 0
+      ? undefined
+      : `${left} more ${left === 1 ? "page follows" : "pages follow"} this one`;
+  const next =
+    result.complete === false && result.nextCursor !== undefined
+      ? `${words.load} with path ${JSON.stringify(result.path)} and cursor ${JSON.stringify(result.nextCursor)}`
+      : undefined;
 
   return joinSections([
     header.join("\n"),
     result.complete === false
-      ? `Skill context is incomplete.${result.nextCursor === undefined ? " Resolve the warnings before using this skill." : ` Continue ${words.load} with path ${JSON.stringify(result.path)} and cursor ${JSON.stringify(result.nextCursor)} before using it.`}`
+      ? `Skill context is incomplete.${next === undefined ? " Resolve the warnings before using this skill." : `${follow === undefined ? "" : ` ${follow}.`} Continue ${next} before using it.`}`
       : undefined,
     files,
     oversized,
@@ -722,6 +733,13 @@ export function renderSkillResult(result: SkillResult, words: ToolWords = MCP_TO
         : `${plural(unlisted.paths.length + unlisted.more, "more linked file", "more linked files")}, not resolved above${unlisted.paths.length === 0 ? "" : `: ${unlisted.paths.join(", ")}${unlisted.more === 0 ? "" : `, and ${unlisted.more} more`}`}. Each is linked where the text names it; ${folder} lists the skill's own files.`
       : undefined,
     renderPackReferences(result.packReferences, words),
+    // The end of a page is what a reader has just read when it decides what to do next: there
+    // it is told once more that the skill goes on, how far, and the call that goes on with it.
+    follow !== undefined && next !== undefined
+      ? `This page ends before the skill does: ${follow}, and what follows is part of its instructions. Do not use the skill or answer from it yet: continue ${next}, and go on until a page says the skill is complete.`
+      : left === 0 && result.complete === true
+        ? "Skill context is complete: this was its last page."
+        : undefined,
   ]);
 }
 

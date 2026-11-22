@@ -5,8 +5,10 @@ import {
   BROWSE_DEFAULT_LIMIT,
   browseCatalogFiles,
   type CatalogFile,
+  CONTEXT_BLOCK_REACH,
   catalogGroups,
   classifyRepoFile,
+  contextPageCuts,
   countContextPages,
   describeLicense,
   FIND_LIST_SKILLS_MAX,
@@ -129,11 +131,19 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
     code: diagnostic.code,
     message: diagnostic.message,
   }));
-  const rulesOf = async (entry: IndexEntry): Promise<string> => {
-    const text = await blobs.read(entry.blobSha);
-    const split = text === undefined ? undefined : splitFrontMatter(text);
-    return split?.kind === "found" ? split.body.trim() : "";
+  // How many lines of a file stand above the text of it that is read, its front matter: what a
+  // line counted in the text is counted from in the file.
+  const linesAbove = (source: string | undefined, text: string): number => {
+    const at = source === undefined ? -1 : source.indexOf(text);
+    return source === undefined || at <= 0 ? 0 : source.slice(0, at).split("\n").length - 1;
   };
+  const ruleOf = async (entry: IndexEntry): Promise<{ text: string; above: number }> => {
+    const source = await blobs.read(entry.blobSha);
+    const split = source === undefined ? undefined : splitFrontMatter(source);
+    const text = split?.kind === "found" ? split.body.trim() : "";
+    return { text, above: linesAbove(source, text) };
+  };
+  const rulesOf = async (entry: IndexEntry): Promise<string> => (await ruleOf(entry)).text;
   const rules = manifest === undefined ? "" : await rulesOf(manifest);
   const catalogFiles: CatalogFile[] = index.entries
     .filter((entry) => entry.visible)
@@ -204,6 +214,10 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
   const notes: string[] = [];
   const bytesOf = (text: string): number => Buffer.byteLength(text, "utf8");
   let large = 0;
+  // The pages that end inside a code block or a line, which nothing said on the next page
+  // mends, and the skills that have one.
+  let cutPages = 0;
+  let cutSkills = 0;
   for (const skill of skills) {
     const directory = skill.skillDir ?? "";
     // What an agent reads before it starts (docs/specs/tools.md): the rules above the skill, its
@@ -219,7 +233,12 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
           isWithinRepoPath(parentDirectory(pathOf(entry.path)), pathOf(directory)),
       )
       .sort((a, b) => a.path.length - b.path.length);
-    const ruleTexts = (await Promise.all(above.map(rulesOf))).filter((text) => text.length > 0);
+    const rulesAbove = (
+      await Promise.all(
+        above.map(async (entry) => ({ path: entry.path, ...(await ruleOf(entry)) })),
+      )
+    ).filter((rule) => rule.text.length > 0);
+    const ruleTexts = rulesAbove.map((rule) => rule.text);
     const includedTexts = await Promise.all(
       (skill.frontMatter?.include ?? []).map(async (path) => {
         const entry = index.entries.find((candidate) => candidate.path === path);
@@ -232,10 +251,35 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
     );
     const ruleBytes = ruleTexts.reduce((sum, text) => sum + bytesOf(text), 0);
     const includedBytes = includedTexts.reduce((sum, file) => sum + file.bytes, 0);
-    const pages = countContextPages(
-      [...ruleTexts, body, ...includedTexts.map((file) => file.text)],
-      SKILL_PAGE_BYTES,
-    );
+    // The texts in the order they are read, each with the file it is of and the lines of that
+    // file above it.
+    const read = [
+      ...rulesAbove,
+      { path: skill.path, text: body, above: linesAbove(source, body) },
+      ...includedTexts.map((file) => ({ path: file.path, text: file.text, above: 0 })),
+    ];
+    const texts = read.map((part) => part.text);
+    const pages = countContextPages(texts, SKILL_PAGE_BYTES);
+    // Where a page ends elsewhere than between two blocks, the author sees it before a reader
+    // does (ADR-0123): what moves a page end is everything above it, the rules of the pack too.
+    const cuts = contextPageCuts(texts, SKILL_PAGE_BYTES);
+    const unmended = cuts.filter((cut) => cut.inside === "code" || cut.inside === "line").length;
+    cutPages += unmended;
+    if (unmended > 0) cutSkills += 1;
+    const ends = cuts
+      .map((cut) => {
+        const part = read[cut.text];
+        const at = `${part?.path ?? "?"} line ${cut.line + (part?.above ?? 0)}`;
+        const next = `page ${cut.page + 1} begins at ${at}`;
+        return cut.inside === "line"
+          ? `  page ${cut.page} ends inside a line longer than a page: ${at}\n`
+          : cut.inside === "code"
+            ? `  page ${cut.page} ends inside a code block: ${next}\n`
+            : cut.inside === "table"
+              ? `  page ${cut.page} ends inside a table: ${next}, under the table's head said again\n`
+              : `  page ${cut.page} ends right after a heading or a line that opens what follows: ${next}\n`;
+      })
+      .join("");
     // The authoring target is the body and what it includes, before the rules above it
     // (docs/specs/skill-repo.md): past it, the author sees what the skill is made of.
     const carried = bytesOf(body) + includedBytes;
@@ -249,7 +293,8 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
       `  context: ${ruleBytes + carried} bytes, read in ${pages} ${pages === 1 ? "page" : "pages"} (rules ${ruleBytes}, instructions ${bytesOf(body)}, included ${includedBytes})\n` +
       (carried <= SKILL_PAGE_BYTES
         ? ""
-        : `  over the ${SKILL_PAGE_BYTES} bytes of instructions and included files a skill aims at${made}\n`);
+        : `  over the ${SKILL_PAGE_BYTES} bytes of instructions and included files a skill aims at${made}\n`) +
+      ends;
     const owned = index.entries.filter(
       (entry) => entry.visible && entry.skillDir === directory && entry.kind !== "skill",
     );
@@ -287,6 +332,11 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
   if (large > 0) {
     notes.push(
       `skills (skill_large): ${large} of ${skills.length} hold more than ${SKILL_PAGE_BYTES} bytes of instructions and included files, what a skill is read in at once; each says under its name what it is made of. An agent reads every page before it starts: what not every run needs is linked from the step that needs it, not included`,
+    );
+  }
+  if (cutPages > 0) {
+    notes.push(
+      `skills (page_cut): ${cutPages} ${cutPages === 1 ? "page" : "pages"} of ${cutSkills} ${cutSkills === 1 ? "skill ends" : "skills end"} inside a code block or a line; each says where under its name. A page ends before a code block of no more than ${CONTEXT_BLOCK_REACH} bytes, the line that announces it counted, and before a line of no more than ${SKILL_PAGE_BYTES}: a longer one is read in two pieces wherever a page ends in it, and where that is moves with everything above it`,
     );
   }
   for (const document of documents) {

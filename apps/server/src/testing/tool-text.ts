@@ -26,7 +26,7 @@ export function continuationOf(text: string): string | undefined {
   const listing = /^nextCursor: (".*")$/m.exec(text);
   if (listing?.[1] !== undefined) return JSON.parse(listing[1]) as string;
   const skill =
-    /^Skill context is incomplete\. Continue load_skill with path ".*" and cursor (".*") before using it\.$/m.exec(
+    /^Skill context is incomplete\.(?: \d+ more pages? follows? this one\.)? Continue load_skill with path ".*" and cursor (".*") before using it\.$/m.exec(
       text,
     );
   return skill?.[1] === undefined ? undefined : (JSON.parse(skill[1]) as string);
@@ -57,7 +57,14 @@ export function skillSectionsOf(text: string): SkillPageSections {
   const headers = [
     ...text.matchAll(/^--- (?:applicable rules: (.+)|(instructions)|included file: (.+)) ---$/gm),
   ];
-  const tail = ["\n\nResolved references:\n", "\n\nReference list abbreviated"]
+  // What a page says after its sections: the references of the first page, and on a page of a
+  // skill read in several, that the skill goes on or that it is complete (ADR-0123).
+  const tail = [
+    "\n\nResolved references:\n",
+    "\n\nReference list abbreviated",
+    "\n\nThis page ends before the skill does: ",
+    "\n\nSkill context is complete: this was its last page.",
+  ]
     .map((marker) => {
       const last = headers.at(-1);
       return text.indexOf(marker, last === undefined ? 0 : last.index);

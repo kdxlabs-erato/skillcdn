@@ -109,6 +109,49 @@ describe("checking a working tree", () => {
     );
   });
 
+  it("says where a page of a skill ends inside a code block, a table or a line (ADR-0123)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "skillcdn-check-cuts-"));
+    const numbered = (count: number, line: (number: string) => string) =>
+      Array.from({ length: count }, (_, at) => line(String(at + 1).padStart(4, "0"))).join("");
+    const front = (name: string) => `---\nname: ${name}\ndescription: A skill of ${name}.\n---\n`;
+    const files: Record<string, string> = {
+      // Nineteen bytes of rules come before every skill, so a page has 16,365 left for its body.
+      "SKILLCDN.md": "---\ndescription: Cuts.\n---\n# Rules\n\nAsk first.\n",
+      // Thirteen bytes above lines of fifteen: 1,090 of them fit, and line 1091 begins page 2.
+      "skills/code/SKILL.md": `${front("code")}# Cut\n\n\`\`\`sh\n${numbered(2_000, (n) => `echo line ${n}\n`)}\`\`\`\n`,
+      // Twenty-eight bytes above rows of twenty: 816 of them fit, and row 817 begins page 2.
+      "skills/table/SKILL.md": `${front("table")}# Wide\n\n| a | b |\n|---|---|\n${numbered(1_500, (n) => `| row ${n} | cell |\n`)}`,
+      // A line of 20,000 bytes, which no page holds.
+      "skills/line/SKILL.md": `${front("line")}# Long\n\n${"word ".repeat(4_000).trim()}\n`,
+      "skills/whole/SKILL.md": `${front("whole")}# Whole\n\n${"A paragraph of a skill that is read whole.\n\n".repeat(600)}`,
+    };
+    for (const [name, contents] of Object.entries(files)) {
+      const parts = name.split("/");
+      await mkdir(join(root, ...parts.slice(0, -1)), { recursive: true });
+      await writeFile(join(root, ...parts), contents);
+    }
+    const { code, report } = await check(root);
+    // Where a page ends is a note, never a failure.
+    expect(code).toBe(0);
+    expect(report).toContain(
+      "  page 1 ends inside a code block: page 2 begins at skills/code/SKILL.md line 1098\n",
+    );
+    expect(files["skills/code/SKILL.md"]?.split("\n")[1097]).toBe("echo line 1091");
+    expect(report).toContain(
+      "  page 1 ends inside a table: page 2 begins at skills/table/SKILL.md line 825, under the table's head said again\n",
+    );
+    expect(files["skills/table/SKILL.md"]?.split("\n")[824]).toBe("| row 0817 | cell |");
+    expect(report).toContain(
+      "  page 1 ends inside a line longer than a page: skills/line/SKILL.md line 7\n",
+    );
+    // A skill whose pages end between its paragraphs says nothing of them.
+    expect(report.split(" ends inside ").length).toBe(4);
+    // The table says its head again on the next page, so it is not among what the note counts.
+    expect(report).toContain(
+      "- skills (page_cut): 2 pages of 2 skills end inside a code block or a line; each says where under its name. A page ends before a code block of no more than 4096 bytes, the line that announces it counted, and before a line of no more than 16384",
+    );
+  });
+
   it("says when the directory cannot be read", async () => {
     const root = await mkdtemp(join(tmpdir(), "skillcdn-check-missing-"));
     const { code, report } = await check(join(root, "does-not-exist"));

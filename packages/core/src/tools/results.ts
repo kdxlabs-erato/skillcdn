@@ -406,6 +406,11 @@ export interface SkillResult {
    * lines, the row of names and the row under it, for the first text of the page (ADR-0118).
    */
   readonly tableHead?: string;
+  /**
+   * On a page of a skill read in more than one: in how many more pages the rest of its context
+   * is read, none on the last. A reader that knows how much is left reads on (ADR-0123).
+   */
+  readonly pagesLeft?: number | undefined;
   readonly path?: RepoPath;
   readonly ruleChain?: readonly SkillRules[];
   readonly references?: readonly FileReference[];
