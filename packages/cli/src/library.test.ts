@@ -195,6 +195,14 @@ describe("the reads of a pack as a library", () => {
     expect(
       first.text.endsWith(`The listing goes on: console skills --cursor ${first.next?.cursor}`),
     ).toBe(true);
+    // A caller that prints lines of its own beside the text keeps room for them.
+    const roomy = await readPack(
+      pack,
+      { read: "skills" },
+      { nextPart: (cursor) => `console skills --cursor ${cursor}`, room: 8_000 },
+    );
+    expect(Buffer.byteLength(roomy.text)).toBeLessThanOrEqual(20_000);
+    expect(Buffer.byteLength(roomy.text)).toBeLessThan(Buffer.byteLength(first.text));
   });
 
   it("stops reading a pack that pages without end, or answers the same page again", async () => {

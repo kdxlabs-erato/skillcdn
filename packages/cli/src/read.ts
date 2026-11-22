@@ -148,6 +148,12 @@ export interface ReadOptions {
    * it is called more than once for a read, and for parts the read tries and does not print.
    */
   readonly nextPart?: ((cursor: string) => string) | undefined;
+  /**
+   * The bytes of UTF-8 the caller prints in the same output beside the text, a line of its own
+   * above or below it: the read keeps that much of the bound free, so that the whole output is
+   * still one a host shows whole (ADR-0124). None by default.
+   */
+  readonly room?: number | undefined;
 }
 
 export interface ReadOutput {
@@ -520,8 +526,9 @@ export async function readPack(
 ): Promise<ReadOutput> {
   const words = options.words ?? COMMAND_WORDS;
   const json = options.json === true;
-  // What one read prints for an agent, in bytes: every read below is made to fit it (ADR-0124).
-  const bound = COMMAND_OUTPUT_MAX_BYTES;
+  // What one read prints for an agent, in bytes, less what the caller prints beside it: every
+  // read below is made to fit it (ADR-0124).
+  const bound = COMMAND_OUTPUT_MAX_BYTES - Math.max(0, options.room ?? 0);
   const fits = (text: string): boolean => utf8Length(text) <= bound;
   // The mount is asked for by the reads that print from it: where the pack is and at which
   // commit, for the text an agent is given. The API's JSON and the data reads need none of it.
