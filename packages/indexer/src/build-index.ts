@@ -10,6 +10,7 @@ import {
   assembleSkillDocument,
   type BlobStore,
   baseName,
+  blobFileUrl,
   classifyLicenseFile,
   classifyRepoFile,
   DomainError,
@@ -48,7 +49,6 @@ import {
   type RepoFileKind,
   type RepoPath,
   ROOT_PATH,
-  rawFileUrl,
   relativeRepoPath,
   repoManifestPath,
   resolveDocumentSource,
@@ -95,8 +95,11 @@ import { gitBlobHash, sha256Hex } from "./git-hash.js";
  * 18: a name written with underscores is a word of the vector beside its parts (ADR-0100).
  * 19: a name joined by capitals, in a name, a title, a path or a heading, is a word of the vector
  *     beside the words it is joined of (ADR-0114).
+ * 20: the document a skill is served as names no commit, and a file left out of it by what the
+ *     file holds, so that its digest changes with the skill and not with the repository
+ *     (ADR-0117).
  */
-export const INDEX_VERSION = 19;
+export const INDEX_VERSION = 20;
 
 /**
  * The lowest version of the reading rules whose index is still served while the commit is
@@ -137,8 +140,8 @@ export interface BuildIndexOptions {
   };
   /**
    * Where the bytes of a file are at the source, for the files the index names with their
-   * source (ADR-0033); left out, the host's raw file URL of `repository`. A directory read as a
-   * working tree names its files on disk.
+   * source (ADR-0033); left out, the host's address of the file by what it holds, which no
+   * push moves (ADR-0117). A directory read as a working tree names its files on disk.
    */
   readonly rawUrl?: (path: RepoPath) => string;
   readonly commit: string;
@@ -1027,7 +1030,11 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
     owner: coordinates.owner,
     name: coordinates.repo,
   };
-  const rawUrl = options.rawUrl ?? ((path: RepoPath) => rawFileUrl(repository, commit, path));
+  const rawUrl = options.rawUrl;
+  const sourceOf = (entry: TreeEntry): { sourceUrl: string; accept?: string } =>
+    rawUrl === undefined
+      ? blobFileUrl(repository, entry.hash, entry.path)
+      : { sourceUrl: rawUrl(entry.path) };
   const listings: Listing[] = [];
   for (const [directory, skill] of skills) {
     const owned = candidates.filter(
@@ -1037,11 +1044,7 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
     const omitted = owned
       .filter(({ entry }) => entry.size > limits.maxReadableFileBytes)
       .sort(byPath)
-      .map(({ entry }) => ({
-        path: entry.path,
-        size: entry.size,
-        sourceUrl: rawUrl(entry.path),
-      }));
+      .map(({ entry }) => ({ path: entry.path, size: entry.size, ...sourceOf(entry) }));
     listings.push({
       directory,
       skill,
@@ -1156,7 +1159,6 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
       continue;
     }
     const input = skillDocumentInput({
-      commit,
       skill: { path: listing.skill.path as RepoPath, text },
       manifests: above.flatMap((manifest) => {
         const body = texts.get(manifest.blobSha);

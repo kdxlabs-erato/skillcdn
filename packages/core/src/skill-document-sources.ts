@@ -8,7 +8,8 @@ import type { OmittedFile, SkillDocumentInput } from "./skill-document.js";
  * is indexed is the digest of what is served later.
  */
 export interface SkillDocumentSources {
-  readonly commit: string;
+  /** Only for an index whose digest covers a line that names the commit (ADR-0117). */
+  readonly commit?: string | undefined;
   /** The skill's own `SKILL.md`: its path and text. */
   readonly skill: { readonly path: RepoPath; readonly text: string };
   /** Readable repository manifests from the repository root to the nearest, with their texts. */
@@ -32,7 +33,7 @@ export function skillDocumentInput(sources: SkillDocumentSources): SkillDocument
   });
   return {
     frontMatter: frontMatter.value,
-    commit: sources.commit,
+    ...(sources.commit === undefined ? {} : { commit: sources.commit }),
     sources: [
       ...rules.map((rule) => rule.path),
       sources.skill.path,

@@ -98,7 +98,6 @@ describe("the served front matter", () => {
 describe("the assembled document", () => {
   const input = {
     frontMatter: fields(SOURCE),
-    commit: "0123456789abcdef0123456789abcdef01234567",
     sources: [
       "SKILLCDN.md",
       "skills/release-notes/SKILL.md",
@@ -128,7 +127,7 @@ describe("the assembled document", () => {
         '  - "notes"',
         'empty: ""',
         "---",
-        "> Assembled by SkillCDN from `SKILLCDN.md`, `skills/release-notes/SKILL.md` and `skills/release-notes/references/style.md` at commit `0123456789abcdef0123456789abcdef01234567`.",
+        "> Assembled by SkillCDN from `SKILLCDN.md`, `skills/release-notes/SKILL.md` and `skills/release-notes/references/style.md`.",
         "",
         "--- applicable rules: SKILLCDN.md ---",
         "# Rules",
@@ -152,14 +151,13 @@ describe("the assembled document", () => {
     expect(
       assembleSkillDocument({
         frontMatter: fields("name: x\ndescription: One."),
-        commit: "a".repeat(40),
         sources: ["SKILL.md"],
         rules: [],
         body: "Do it.",
         included: [],
       }),
     ).toBe(
-      `---\nname: "x"\ndescription: "One."\n---\n${provenanceLine("a".repeat(40), ["SKILL.md"])}\n\n--- instructions ---\nDo it.\n`,
+      `---\nname: "x"\ndescription: "One."\n---\n${provenanceLine(["SKILL.md"])}\n\n--- instructions ---\nDo it.\n`,
     );
   });
 
@@ -169,15 +167,32 @@ describe("the assembled document", () => {
         path: "skills/release-notes/data/fonts.json",
         size: 3_000_000,
         sourceUrl:
-          "https://raw.githubusercontent.com/acme/skills/0123456789abcdef0123456789abcdef01234567/skills/release-notes/data/fonts.json",
+          "https://api.github.com/repos/acme/skills/git/blobs/89abcdef0123456789abcdef0123456789abcdef",
+        accept: "application/vnd.github.raw+json",
+      },
+      {
+        path: "skills/release-notes/data/table.csv",
+        size: 4_000_000,
+        sourceUrl: "file:///packs/acme/skills/release-notes/data/table.csv",
       },
     ];
     const document = assembleSkillDocument({ ...input, omitted });
     expect(document).toContain(
-      `${provenanceLine(input.commit, input.sources)}\n> Not included, over this server's file size limit: \`skills/release-notes/data/fonts.json\` (3000000 bytes); fetch it from ${omitted[0]?.sourceUrl}\n\n--- applicable rules: SKILLCDN.md ---`,
+      `${provenanceLine(input.sources)}\n> Not included, over this server's file size limit: \`skills/release-notes/data/fonts.json\` (3000000 bytes); fetch it from ${omitted[0]?.sourceUrl} with the header \`Accept: application/vnd.github.raw+json\`\n> Not included, over this server's file size limit: \`skills/release-notes/data/table.csv\` (4000000 bytes); fetch it from ${omitted[1]?.sourceUrl}\n\n--- applicable rules: SKILLCDN.md ---`,
     );
     // Without the list, or with an empty one, the document is the same as before.
     expect(assembleSkillDocument({ ...input, omitted: [] })).toBe(assembleSkillDocument(input));
+  });
+
+  it("names the commit only for an index that digested the line with it", () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    expect(provenanceLine(["SKILL.md"])).toBe("> Assembled by SkillCDN from `SKILL.md`.");
+    expect(provenanceLine(["SKILL.md"], commit)).toBe(
+      `> Assembled by SkillCDN from \`SKILL.md\` at commit \`${commit}\`.`,
+    );
+    expect(assembleSkillDocument({ ...input, commit })).toBe(
+      assembleSkillDocument(input).replace("style.md`.\n", `style.md\` at commit \`${commit}\`.\n`),
+    );
   });
 
   it("marks sections a page cut, and files that are not at hand, only for a tool", () => {

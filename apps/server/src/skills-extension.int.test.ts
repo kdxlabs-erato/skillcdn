@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Client } from "@modelcontextprotocol/client";
 import { renderSkillSections, restMountSchema } from "@skillcdn/core";
 import { createTestDatabase, DEV_DATABASE_URL, type TestDatabase } from "@skillcdn/db/testing";
+import { gitBlobHash } from "@skillcdn/indexer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as z from "zod";
 import { createFixtureHost, fixtureCommits } from "./testing/fixture-host.js";
@@ -141,8 +142,10 @@ describe("the MCP skills extension", () => {
       ).toBe(true);
       expect(document).not.toContain("skillcdn");
       expect(document).toContain(
-        "> Assembled by SkillCDN from `SKILLCDN.md`, `skills/write/SKILL.md` and `skills/write/style.md` at commit `",
+        "> Assembled by SkillCDN from `SKILLCDN.md`, `skills/write/SKILL.md` and `skills/write/style.md`.\n",
       );
+      // Nothing of the document moves with the commit (ADR-0117).
+      expect(document).not.toContain("at commit");
       const sections = renderSkillSections({
         rules: [{ path: "SKILLCDN.md", body: "# Rules\n\nAsk first." }],
         body: "Write the document.",
@@ -235,7 +238,7 @@ describe("the MCP skills extension", () => {
       const document = (read.contents[0] as { text?: string }).text ?? "";
       expect(sha256(new TextEncoder().encode(document))).toBe(write.resources[0]?.digest);
       expect(document).toContain(
-        "> Assembled by SkillCDN from `SKILLCDN.md`, `skills/write/SKILL.md`, `docs/shared.md` and `skills/write/style.md` at commit `",
+        "> Assembled by SkillCDN from `SKILLCDN.md`, `skills/write/SKILL.md`, `docs/shared.md` and `skills/write/style.md`.\n",
       );
       expect(document).toContain(
         renderSkillSections({
@@ -341,9 +344,13 @@ describe("the MCP skills extension", () => {
       ]);
       const read = await client.readResource({ uri: write.uri });
       const document = (read.contents[0] as { text?: string }).text ?? "";
+      // In the document the file is named by what it holds, so that the line, and the digest
+      // over it, stay from commit to commit while the file does (ADR-0117).
+      const blobUrl = `https://api.github.com/repos/Acme/multi-skill/git/blobs/${gitBlobHash(new TextEncoder().encode(big))}`;
       expect(document).toContain(
-        `> Not included, over this server's file size limit: \`skills/write/data/fonts.json\` (${big.length} bytes); fetch it from ${sourceUrl}\n`,
+        `> Not included, over this server's file size limit: \`skills/write/data/fonts.json\` (${big.length} bytes); fetch it from ${blobUrl} with the header \`Accept: application/vnd.github.raw+json\`\n`,
       );
+      expect(document).not.toContain(commit);
       expect(sha256(new TextEncoder().encode(document))).toBe(write.resources[0]?.digest);
       await expect(
         client.readResource({ uri: `${prefix}/skills/write/data/fonts.json` }),

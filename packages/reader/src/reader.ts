@@ -6,6 +6,7 @@ import {
   browseCatalogFiles,
   type CatalogFile,
   type CatalogState,
+  COMMITLESS_DOCUMENT_INDEX_VERSION,
   type CodeResult,
   catalogGroups,
   classifyRepoFile,
@@ -1568,7 +1569,8 @@ export class Reader<M extends MountContext = MountContext> {
       return undefined;
     }
     const input = skillDocumentInput({
-      commit: mount.commit,
+      // An index written while the document named its commit digested that line (ADR-0117).
+      ...(index.version < COMMITLESS_DOCUMENT_INDEX_VERSION ? { commit: mount.commit } : {}),
       skill: { path: skill.path as RepoPath, text },
       manifests: rules.map((rule) => ({ path: rule.path, text: rule.text ?? "" })),
       included: included.map((file) => ({ path: file.path, text: file.text ?? "" })),
@@ -2006,9 +2008,17 @@ export class Reader<M extends MountContext = MountContext> {
           .map((file) => belowMount(mount, file))
           .filter((file) => file !== undefined),
         filesTruncated: files.length > MAX_LISTED_SKILL_FILES,
+        // In the commit read, where a plain request has the bytes: the address the document
+        // carries is the one that stays across commits, and asks for a header (ADR-0117).
         ...(skill.frontMatter?.omitted === undefined
           ? {}
-          : { oversized: skill.frontMatter.omitted }),
+          : {
+              oversized: skill.frontMatter.omitted.map((file) => ({
+                path: file.path,
+                size: file.size,
+                sourceUrl: mount.rawUrl(file.path as RepoPath),
+              })),
+            }),
         included: pagedIncluded,
         warnings,
         rules: pagedRules[0],

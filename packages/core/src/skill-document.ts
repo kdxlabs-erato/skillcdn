@@ -1,11 +1,19 @@
 /**
  * The wire form of a skill: a plain Agent Skills `SKILL.md` assembled from its sources
  * (ADR-0025). The front matter of the source is re-serialized without what SkillCDN adds, a
- * line names the files and the commit it was assembled from, then come the rules of the
- * repository manifests from the root down, the skill's own body, and the files it includes. The
- * same text goes through the skills extension and through `load_skill`, and its digest is what
- * the listing declares.
+ * line names the files it was assembled from, then come the rules of the repository manifests
+ * from the root down, the skill's own body, and the files it includes. The same text goes
+ * through the skills extension and through `load_skill`, and its digest is what the listing
+ * declares. Nothing in it moves with the commit: the same sources are the same bytes, so the
+ * digest changes when the skill does and not when its repository does (ADR-0117).
  */
+
+/**
+ * The version of the reading rules from which the document names no commit (ADR-0117). An index
+ * written under an older one digested a line with the commit in it, and is served so until it
+ * is rebuilt.
+ */
+export const COMMITLESS_DOCUMENT_INDEX_VERSION = 20;
 
 /** The front-matter key that holds what SkillCDN adds; it stays in the source and leaves the wire. */
 export const SKILLCDN_KEY = "skillcdn";
@@ -39,8 +47,14 @@ export interface OmittedFile {
   /** The repository-root path of the file. */
   readonly path: string;
   readonly size: number;
-  /** The raw bytes of the file at the host, in the commit the document is assembled from. */
+  /**
+   * Where the bytes of the file are. In the document, an address that names the file by its
+   * content, so that the line stays while the file does (ADR-0117); in the result of a read,
+   * the file in the commit read.
+   */
   readonly sourceUrl: string;
+  /** The media type to ask `sourceUrl` for, where it answers the bytes only when asked. */
+  readonly accept?: string | undefined;
 }
 
 export interface SkillDocumentInput extends SkillSections {
@@ -49,9 +63,13 @@ export interface SkillDocumentInput extends SkillSections {
    * sequences and mappings, in the author's order.
    */
   readonly frontMatter: ReadonlyMap<string, unknown>;
-  /** The commit the document is assembled from, and the source files in the order they are used. */
-  readonly commit: string;
+  /** The source files, in the order they are used. */
   readonly sources: readonly string[];
+  /**
+   * The commit, only for an index written before {@link COMMITLESS_DOCUMENT_INDEX_VERSION},
+   * whose digest covers a line that names it.
+   */
+  readonly commit?: string | undefined;
   /** The files of the skill left out for their size, in path order. */
   readonly omitted?: readonly OmittedFile[];
 }
@@ -164,9 +182,13 @@ export function renderSkillSections(
   return parts.join("\n\n");
 }
 
-/** The line that says where the document came from; it opens the body of every served skill. */
-export function provenanceLine(commit: string, sources: readonly string[]): string {
-  return `> Assembled by SkillCDN from ${listOfPaths(sources)} at commit \`${commit}\`.`;
+/**
+ * The line that says what the document was assembled from; it opens the body of every served
+ * skill. With `commit`, the line as it was while the document named one.
+ */
+export function provenanceLine(sources: readonly string[], commit?: string): string {
+  const at = commit === undefined ? "" : ` at commit \`${commit}\``;
+  return `> Assembled by SkillCDN from ${listOfPaths(sources)}${at}.`;
 }
 
 /**
@@ -176,13 +198,13 @@ export function provenanceLine(commit: string, sources: readonly string[]): stri
 export function omittedLines(omitted: readonly OmittedFile[]): string[] {
   return omitted.map(
     (file) =>
-      `> Not included, over this server's file size limit: \`${file.path}\` (${file.size} bytes); fetch it from ${file.sourceUrl}`,
+      `> Not included, over this server's file size limit: \`${file.path}\` (${file.size} bytes); fetch it from ${file.sourceUrl}${file.accept === undefined ? "" : ` with the header \`Accept: ${file.accept}\``}`,
   );
 }
 
 /** The complete document, ending in one line break. Deterministic: the same input, the same bytes. */
 export function assembleSkillDocument(input: SkillDocumentInput): string {
   const sections = renderSkillSections(input);
-  const head = [provenanceLine(input.commit, input.sources), ...omittedLines(input.omitted ?? [])];
+  const head = [provenanceLine(input.sources, input.commit), ...omittedLines(input.omitted ?? [])];
   return `---\n${serializeFrontMatter(input.frontMatter)}\n---\n${head.join("\n")}${sections.length === 0 ? "" : `\n\n${sections}`}\n`;
 }

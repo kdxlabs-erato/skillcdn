@@ -38,6 +38,7 @@ async function index(
     symlinks?: string[];
     truncated?: boolean;
     pause?: () => Promise<void>;
+    commit?: string;
   } = {},
 ) {
   const bytes = new Map<string, Uint8Array>();
@@ -88,7 +89,7 @@ async function index(
     gitHost,
     blobStore,
     coordinates: { host: "gh", owner: "example", repo: "skills" },
-    commit: "a".repeat(40),
+    commit: options.commit ?? "a".repeat(40),
     limits: { ...INDEX_LIMIT_DEFAULTS, ...options.limits },
     signal: new AbortController().signal,
     pause: options.pause,
@@ -666,7 +667,6 @@ describe("what the skills extension lists", () => {
       "docs/guide.md": "# Guide\n",
     });
     const input = skillDocumentInput({
-      commit: "a".repeat(40),
       skill: { path: path("skills/example/SKILL.md"), text: write },
       manifests: [{ path: path("SKILLCDN.md"), text: rules }],
       included: [{ path: path("skills/example/notes.md"), text: "Notes." }],
@@ -716,7 +716,6 @@ describe("what the skills extension lists", () => {
       },
     });
     const input = skillDocumentInput({
-      commit: "a".repeat(40),
       skill: { path: path("marketing/skills/example/SKILL.md"), text: ad },
       manifests: [
         { path: path("SKILLCDN.md"), text: rules },
@@ -788,7 +787,6 @@ describe("what the skills extension lists", () => {
     }
     // The document is assembled from what was kept, in the author's order.
     const input = skillDocumentInput({
-      commit: "a".repeat(40),
       skill: { path: path("marketing/skills/example/SKILL.md"), text: ad },
       manifests: [{ path: path("SKILLCDN.md"), text: rules }],
       included: [{ path: path("docs/shared.md"), text: "Shared." }],
@@ -855,8 +853,18 @@ describe("what the skills extension lists", () => {
       },
       { limits: { maxReadableFileBytes: 4096 } },
     );
-    const sourceUrl = `https://raw.githubusercontent.com/example/skills/${"a".repeat(40)}/skills/example/data/fonts.json`;
-    const omitted = [{ path: "skills/example/data/fonts.json", size: 5012, sourceUrl }];
+    // The file is named by what it holds, its git object, and not by the commit: the line, and
+    // so the digest, stay while the file does (ADR-0117).
+    const fonts = new TextEncoder().encode(`{"fonts":"${"x".repeat(5000)}"}`);
+    const sourceUrl = `https://api.github.com/repos/example/skills/git/blobs/${gitBlobHash(fonts)}`;
+    const omitted = [
+      {
+        path: "skills/example/data/fonts.json",
+        size: 5012,
+        sourceUrl,
+        accept: "application/vnd.github.raw+json",
+      },
+    ];
     const listed = result.byPath.get("skills/example/SKILL.md");
     expect(listed).toMatchObject({ listed: true, searchable: true, frontMatter: { omitted } });
     expect(listed?.frontMatter?.unlisted).toBeUndefined();
@@ -868,7 +876,6 @@ describe("what the skills extension lists", () => {
     // The document names the file, and its digest covers that line, so the file is not fetched
     // and the skill is still served as a whole the host can verify.
     const input = skillDocumentInput({
-      commit: "a".repeat(40),
       skill: { path: path("skills/example/SKILL.md"), text: skill("Fine.") },
       manifests: [],
       included: [],
@@ -876,7 +883,9 @@ describe("what the skills extension lists", () => {
     });
     if (input === undefined) throw new Error("the skill must assemble");
     const document = assembleSkillDocument(input);
-    expect(document).toContain(`(5012 bytes); fetch it from ${sourceUrl}`);
+    expect(document).toContain(
+      `(5012 bytes); fetch it from ${sourceUrl} with the header \`Accept: application/vnd.github.raw+json\``,
+    );
     expect(listed?.digest).toBe(digestOf(document));
     // Fetched for search under the larger indexing limit, the file is still not served: no digest
     // lists it, whatever the limits are in relation to each other.
@@ -885,6 +894,37 @@ describe("what the skills extension lists", () => {
     expect(result.byPath.get("skills/example/notes.md")?.digest).toBe(digestOf("Notes."));
     // A data file over the per-file limit is listed, not lost: the index is not partial for it.
     expect(result.truncated).toBe(false);
+  });
+
+  it("gives a skill the same digest in every commit that holds the same skill", async () => {
+    const including = "skillcdn:\n  include: [notes.md]\n";
+    const files = {
+      "SKILLCDN.md": manifest("# Rules\n\nAsk first."),
+      "README.md": "# A pack\n",
+      "skills/example/SKILL.md": skill("Write it.", including),
+      "skills/example/notes.md": "Notes.",
+      "skills/example/data/fonts.json": `{"fonts":"${"x".repeat(5000)}"}`,
+    };
+    const limits = { maxReadableFileBytes: 4096 };
+    const digestIn = async (commit: string, changed: Record<string, string>) =>
+      (await index({ ...files, ...changed }, { limits, commit })).byPath.get(
+        "skills/example/SKILL.md",
+      )?.digest;
+    const first = await digestIn("a".repeat(40), {});
+    expect(first).toBeDefined();
+    // A push that touches nothing of the skill: another commit, the same document.
+    expect(await digestIn("b".repeat(40), { "README.md": "# A pack, described\n" })).toBe(first);
+    // What the skill is made of changes it: its body, a file it includes, a rule above it, and
+    // the file it is served without.
+    const changes: Record<string, string>[] = [
+      { "skills/example/SKILL.md": skill("Write it well.", including) },
+      { "skills/example/notes.md": "Other notes." },
+      { "SKILLCDN.md": manifest("# Rules\n\nAsk twice.") },
+      { "skills/example/data/fonts.json": `{"fonts":"${"y".repeat(5000)}"}` },
+    ];
+    for (const changed of changes) {
+      expect(await digestIn("b".repeat(40), changed)).not.toBe(first);
+    }
   });
 
   it("counts a file that several copies share once toward the byte budget", async () => {

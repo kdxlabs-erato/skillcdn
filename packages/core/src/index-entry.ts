@@ -81,12 +81,15 @@ export interface SkillFrontMatter {
   /**
    * Skill only: the files of the skill over the read limit when the commit was indexed
    * (ADR-0033): left out of what is served, and named in the served document with where their
-   * bytes are at the host. Kept here so that a read assembles the document the index digested.
+   * bytes are at the host, by what each holds and not by the commit (ADR-0117), and the media
+   * type to ask that address for where it needs one. Kept here so that a read assembles the
+   * document the index digested.
    */
   readonly omitted?: readonly {
     readonly path: string;
     readonly size: number;
     readonly sourceUrl: string;
+    readonly accept?: string | undefined;
   }[];
   /**
    * The license that governs the file (ADR-0026): for a skill, the one resolved for it; for a

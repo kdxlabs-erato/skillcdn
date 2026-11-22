@@ -55,6 +55,7 @@ export { isFullCommitHash, isValidRefName, MAX_REF_LENGTH } from "./git-ref.js";
 export {
   accountAvatarUrl,
   accountPageUrl,
+  blobFileUrl,
   lfsFileUrl,
   localRawFileUrl,
   rawFileUrl,
@@ -563,6 +564,7 @@ export {
 } from "./search/vector.js";
 export {
   assembleSkillDocument,
+  COMMITLESS_DOCUMENT_INDEX_VERSION,
   frontMatterObject,
   type IncludedFileSection,
   type OmittedFile,

@@ -41,6 +41,29 @@ export function rawFileUrl(
 }
 
 /**
+ * The bytes of a file as the host serves them by what the file holds, its git object, whatever
+ * commit it is in (ADR-0117): an address that stays while the file does, for what is written
+ * where a commit must not be. GitHub answers an object as JSON unless the raw media type is
+ * asked for, which `accept` says. A pack served from a directory names its file, which has no
+ * commit to move with.
+ */
+export function blobFileUrl(
+  repository: { readonly host: AddressHost; readonly owner: string; readonly name: string },
+  blobSha: string,
+  path: RepoPath,
+): { readonly sourceUrl: string; readonly accept?: string } {
+  switch (repository.host) {
+    case "gh":
+      return {
+        sourceUrl: `https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/git/blobs/${encodeURIComponent(blobSha)}`,
+        accept: "application/vnd.github.raw+json",
+      };
+    case "local":
+      return { sourceUrl: localRawFileUrl(repository, path) };
+  }
+}
+
+/**
  * The bytes of a file kept in Git LFS, which the host's raw host does not serve: GitHub's own
  * raw route answers the file itself for one, by a redirect to where it keeps LFS objects, and
  * the raw host's bytes for any other file. A pack served from a directory has the pointer and
