@@ -9,6 +9,7 @@ import {
   BROWSE_DEFAULT_LIMIT,
   BROWSE_MAX_LIMIT,
   type Clock,
+  COMMAND_OUTPUT_MAX_BYTES,
   FIND_DEFAULT_LIMIT,
   FIND_MAX_LIMIT,
   formatAddress,
@@ -67,7 +68,6 @@ import { type Pack, PackError } from "./pack.js";
 import {
   COMMAND_WORDS,
   FILE_PAGE_CHARS,
-  OUTPUT_CHARS,
   type PackRead,
   ReadMisuse,
   readNumber,
@@ -218,6 +218,8 @@ An address is read at --url, else SKILLCDN_URL, else the deployment the director
 else ${DEFAULT_ORIGIN}, with the token kept for that deployment and the repository read, or
 SKILLCDN_TOKEN beside SKILLCDN_URL. Paths start at the pack's root, as marketing/ads/SKILL.md.
 Every read answers the words an MCP client's model is given, or the JSON of the REST API with --json.
+A read prints no more than ${COMMAND_OUTPUT_MAX_BYTES} bytes for an agent, what the hosts that run its commands show
+whole, and one that ends before what was asked for says how to read on.
 
 Exit codes: 0 done; 1 the pack does not have it, or refuses it; 2 the pack cannot be read, the
 directory or the deployment; 64 a usage error; 78 a variable that cannot be read; 70 a failure.
@@ -265,11 +267,12 @@ Exit codes: 0 when there are no index diagnostics, 1 when there are, or when a f
 asked about is not there, 2 when the directory cannot
 be read. The INDEX_* and READ_MAX_FILE_BYTES variables set the limits a deployment would apply.
 `,
-  skills: `usage: skillcdn skills [<pack>] [--url <origin>] [--as <address>] [--json]
+  skills: `usage: skillcdn skills [<pack>] [--cursor <cursor>] [--url <origin>] [--as <address>] [--json]
 
 What a client is told when it connects to the pack, within its 2,000 characters, then every
 skill and every document outside the skills, as a search without words lists them: each skill
-with its SKILL.md path, which skillcdn skill takes.
+with its SKILL.md path, which skillcdn skill takes. A listing longer than one read prints,
+${COMMAND_OUTPUT_MAX_BYTES} bytes, ends with the command that lists the rest, with its --cursor.
 
 ${READ_OPTIONS}
 `,
@@ -278,7 +281,8 @@ ${READ_OPTIONS}
 What a folder holds, as browse_repo lists it: its skills, its folders with what each holds and
 the README that introduces it, and its files, with the canonical path of each. The pack's root
 when no folder is given. A page of ${BROWSE_DEFAULT_LIMIT} entries unless --limit says otherwise (up to
-${BROWSE_MAX_LIMIT}); a page that ends before the folder does names its nextCursor, which --cursor continues.
+${BROWSE_MAX_LIMIT}), and of fewer where they would not print within ${COMMAND_OUTPUT_MAX_BYTES} bytes; a page that ends
+before the folder does names its nextCursor, which --cursor continues.
 
 ${READ_OPTIONS}
 `,
@@ -289,8 +293,9 @@ in, usually English, and meaning as well where a deployment offers it, or where 
 and EMBEDDINGS_MODEL name an embeddings server for a directory (skillcdn help serve says how);
 a skill comes with the files of it that matched, in order of relevance, and skills outrank
 documents. --path keeps the search to a folder. A page of ${FIND_DEFAULT_LIMIT}
-results unless --limit says otherwise (up to ${FIND_MAX_LIMIT}); a page that ends before the results do
-names its nextCursor, which --cursor continues.
+results unless --limit says otherwise (up to ${FIND_MAX_LIMIT}), and of fewer where they would not print
+within ${COMMAND_OUTPUT_MAX_BYTES} bytes; a page that ends before the results do names its nextCursor, which
+--cursor continues.
 
 ${READ_OPTIONS}
 `,
@@ -316,19 +321,21 @@ to the skill's own folder, then its instructions, then the files it includes on 
 under a line that names its path; then the files it has and what it refers to. <path> is the
 path of its SKILL.md from the pack's root, as skills and browse print it, or the skill://
 URI the pack names it by, which then names the pack as well. The pages the skill is read in are
-joined, up to ${OUTPUT_CHARS} characters: a skill longer than that is printed in parts, and the
-last line of a part is the command that prints the next, with its --cursor. A part ends after a
-line, and a part after the first names the skill without its description, files and references.
-Read every part before using the skill. --json prints the skill whole, from --cursor where it is
-given.
+joined, up to ${COMMAND_OUTPUT_MAX_BYTES} bytes: a skill longer than that is printed in parts. A part that is
+not the last says how many pages of the skill follow it, at its head and at its end, and its
+last line is the command that prints the next, with its --cursor; the last part says that the
+skill is complete. A part ends after a line, and a part after the first names the skill without
+its description, files and references. Read every part before using the skill. --json prints
+the skill whole, from --cursor where it is given.
 
 ${READ_OPTIONS}
 `,
   file: `usage: skillcdn file [<pack>] <path> [--offset <n>] [--limit <n>] [--url <origin>] [--as <address>] [--json]
 
 A page of a file, as read_repo_file reads it: the text as written, from character --offset,
-${FILE_PAGE_CHARS} characters unless --limit says otherwise (up to ${READ_FILE_MAX_LIMIT}); a page that ends before
-the file does says where the next begins. A path that names a folder answers what the folder
+${FILE_PAGE_CHARS} characters unless --limit says otherwise (up to ${READ_FILE_MAX_LIMIT}), and no more than print
+within ${COMMAND_OUTPUT_MAX_BYTES} bytes with the header and the links; a page that ends before the file does ends
+after a line and says where the next begins. A path that names a folder answers what the folder
 holds. A file over the read limit, one that is not text, and one a license keeps at its source
 are named with where to read them instead. --json prints the page the REST API answers,
 ${READ_FILE_DEFAULT_LIMIT} characters unless --limit says otherwise.
@@ -988,6 +995,12 @@ async function readCommand(
   const { pack, skillPath } = await openPack(given, parsed.values, io);
   const json = parsed.values.json === true;
   const { values } = parsed;
+  // A read that goes on is asked for again as it was: the pack, and where it is read (ADR-0108).
+  const named = given === undefined ? [] : [given];
+  const origin = [
+    ...(values.url === undefined ? [] : ["--url", values.url]),
+    ...(values.as === undefined ? [] : ["--as", values.as]),
+  ];
   /** The read the arguments ask for, checked for what the command takes of them. */
   const asked = ((): { read: PackRead; nextPart?: (cursor: string) => string } => {
     const [argument, ...more] = positionals;
@@ -996,7 +1009,13 @@ async function readCommand(
         if (positionals.length > 0) {
           throw new Misuse("skills takes the pack and nothing else.");
         }
-        return { read: { read: "skills" } };
+        return {
+          read: { read: "skills", cursor: values.cursor },
+          nextPart: (cursor) =>
+            ["skillcdn", "skills", ...named, ...origin, "--cursor", cursor]
+              .map(shellWord)
+              .join(" "),
+        };
       case "browse":
         if (more.length > 0) {
           throw new Misuse("browse takes the pack and at most one folder.");
@@ -1023,12 +1042,7 @@ async function readCommand(
         }
         // The next part is asked for as this one was: the pack, the path or URI, and where it
         // is read (ADR-0108).
-        const asGiven = [
-          ...(given === undefined ? [] : [given]),
-          ...(argument === undefined ? [] : [argument]),
-          ...(values.url === undefined ? [] : ["--url", values.url]),
-          ...(values.as === undefined ? [] : ["--as", values.as]),
-        ];
+        const asGiven = [...named, ...(argument === undefined ? [] : [argument]), ...origin];
         return {
           read: {
             read: "skill",

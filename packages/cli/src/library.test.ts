@@ -131,6 +131,70 @@ describe("the reads of a pack as a library", () => {
       },
     );
     expect(JSON.parse(whole.text).skill.pagesLeft).toBeUndefined();
+    // A read says where it goes on, for a program that acts on it and reads no text for it
+    // (ADR-0124): the cursor of the next part, and the pages still to read.
+    const read = { read: "skill", path: "marketing/long/SKILL.md" } as const;
+    const lines: string[] = [];
+    const nextPart = (next: string): string => {
+      lines.push(next);
+      return `console skill long --cursor ${next}`;
+    };
+    const facts: (number | undefined)[] = [];
+    let part = await readPack(pack, read, { nextPart });
+    for (let parts = 0; part.next !== undefined && parts < 10; parts += 1) {
+      facts.push(part.next.pagesLeft);
+      // The part ends with the line the caller made for the cursor it answers.
+      expect(part.text.endsWith(`\nconsole skill long --cursor ${part.next.cursor}`)).toBe(true);
+      part = await readPack(pack, { ...read, cursor: part.next.cursor }, { nextPart });
+    }
+    expect(facts.length).toBeGreaterThan(0);
+    expect(facts.at(-1)).toBe(1);
+    expect(part.next).toBeUndefined();
+    expect(part.text.endsWith("Skill context is complete: this was its last part.")).toBe(true);
+    // The line is made for parts the read tries and does not print as well: it only makes it.
+    expect(lines.length).toBeGreaterThan(facts.length);
+    // A skill printed whole goes on nowhere, and neither does a short file or folder.
+    const single = await readPack(pack, { read: "skill", path: "marketing/short/SKILL.md" });
+    expect(single.next).toBeUndefined();
+    expect(single.text).not.toContain("part");
+    const page = await readPack(pack, { read: "file", path: "marketing/long/SKILL.md" });
+    expect(page.next?.offset).toBeGreaterThan(0);
+    expect(page.text).toContain(
+      `More follows: call skillcdn file with offset ${page.next?.offset}.`,
+    );
+    const folder = await readPack(pack, { read: "browse", path: "marketing", limit: 1 });
+    expect(folder.next?.cursor).toBeDefined();
+    expect(folder.text).toContain(`nextCursor: "${folder.next?.cursor}"`);
+  });
+
+  it("lists a long pack in pages only for a caller that says how to read on (ADR-0124)", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "skillcdn-library-listing-"));
+    const root = join(parent, "acme-skills");
+    // Descriptions are listed at most some 360 characters each: ninety of them pass one read.
+    for (let at = 0; at < 90; at += 1) {
+      const name = `job-${String(at).padStart(2, "0")}`;
+      await mkdir(join(root, "skills", name), { recursive: true });
+      await writeFile(
+        join(root, "skills", name, "SKILL.md"),
+        `---\nname: ${name}\ndescription: ${"Does one job from its start to its end. ".repeat(20)}\n---\n# Job\n`,
+      );
+    }
+    const pack = await openDirectory({ directory: root, limits: INDEX_LIMIT_DEFAULTS });
+    if ("error" in pack) throw new Error("the directory is a pack");
+    // No way on from a page: the listing whole, as before.
+    const whole = await readPack(pack, { read: "skills" });
+    expect(whole.next).toBeUndefined();
+    expect(Buffer.byteLength(whole.text)).toBeGreaterThan(28_000);
+    // A way on: a page within one read, ending with the caller's command.
+    const first = await readPack(
+      pack,
+      { read: "skills" },
+      { nextPart: (cursor) => `console skills --cursor ${cursor}` },
+    );
+    expect(Buffer.byteLength(first.text)).toBeLessThanOrEqual(28_000);
+    expect(
+      first.text.endsWith(`The listing goes on: console skills --cursor ${first.next?.cursor}`),
+    ).toBe(true);
   });
 
   it("stops reading a pack that pages without end, or answers the same page again", async () => {

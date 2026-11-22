@@ -31,6 +31,7 @@ import {
   pageOfText,
   type SkillResult,
 } from "./results.js";
+import { skillShown } from "./shown.js";
 
 function path(input: string): RepoPath {
   const result = parseRepoPath(input);
@@ -665,20 +666,66 @@ describe("rendering", () => {
       "Skill context is incomplete. Resolve the warnings before using this skill.",
     );
     expect(stuck).not.toContain("This page ends before the skill does");
-    // A part the command prints is a run of pages: it counts none, and names its own next read.
-    const part = renderSkillResult(
-      skillResult({
-        path: path("SKILL.md"),
-        complete: false,
-        nextCursor: "next-page",
-        pagesLeft: 3,
-      }),
-      { ...MCP_TOOL_WORDS, load: "skillcdn skill", piece: "part" },
-    );
+  });
+
+  it("says the same of a part a command prints, and ends it with the line that prints the next (ADR-0124)", () => {
+    const words = {
+      ...MCP_TOOL_WORDS,
+      load: "skillcdn skill",
+      piece: "part",
+      loadNext: (skill: string, cursor: string) =>
+        `skillcdn skill pack ${skill} --cursor ${cursor}`,
+    };
+    const line = "skillcdn skill pack SKILL.md --cursor next-page";
+    const going = { path: path("SKILL.md"), complete: false, nextCursor: "next-page" };
+    // A part is a run of pages: the pages of the skill are what is counted, in the part's word.
+    const part = renderSkillResult(skillResult({ ...going, pagesLeft: 3 }), words);
     expect(part).toContain(
-      'Skill context is incomplete. Continue skillcdn skill with path "SKILL.md" and cursor "next-page" before using it.',
+      `Skill context is incomplete. 3 more pages follow this part. Read the next part before using it: ${line}`,
     );
-    expect(part).not.toContain("more pages follow");
+    // The last line is the line to run, alone, after what says to run it now.
+    expect(
+      part.endsWith(
+        `This part ends before the skill does: 3 more pages follow this part, and what follows is part of its instructions. Do not use the skill, plan from it or answer from it yet: read the next part now, and each one after it, until a part says the skill is complete:\n${line}`,
+      ),
+    ).toBe(true);
+    // A pack that counts no pages still says that the skill goes on, at the head and at the end.
+    const uncounted = renderSkillResult(skillResult(going), words);
+    expect(uncounted).toContain(
+      `Skill context is incomplete. Read the next part before using it: ${line}`,
+    );
+    expect(
+      uncounted.endsWith(
+        `This part ends before the skill does: what follows is part of its instructions. Do not use the skill, plan from it or answer from it yet: read the next part now, and each one after it, until a part says the skill is complete:\n${line}`,
+      ),
+    ).toBe(true);
+    const last = renderSkillResult(skillResult({ complete: true, pagesLeft: 0 }), words);
+    expect(last.endsWith("Skill context is complete: this was its last part.")).toBe(true);
+    // A skill printed whole says nothing of parts, and words without a line name the read.
+    expect(renderSkillResult(skillResult({ complete: true }), words)).not.toContain("part");
+    const named = renderSkillResult(skillResult({ ...going, pagesLeft: 1 }), {
+      ...MCP_TOOL_WORDS,
+      load: "skillcdn skill",
+      piece: "part",
+    });
+    expect(named).toContain(
+      'Skill context is incomplete. 1 more page follows this part. Continue skillcdn skill with path "SKILL.md" and cursor "next-page" before using it.',
+    );
+  });
+
+  it("shows of a skill what one answer takes of it: the lists bounded, the facts once", () => {
+    const files = Array.from({ length: 200 }, (_, at) => path(`references/file-${at}-of-many.md`));
+    const shown = skillShown(
+      skillResult({ description: "word ".repeat(200), files, warnings: ["a", "b", "c", "d"] }),
+    );
+    expect(shown.description.length).toBe(360);
+    expect(shown.files.length).toBeLessThan(files.length);
+    expect(shown.filesTruncated).toBe(true);
+    expect(shown.detailsAbbreviated).toEqual(["the description", "the warnings (3 of 4)"]);
+    // A page after the first names the skill and says none of its facts again.
+    const later = skillShown(skillResult({ description: "A skill.", files, license: "MIT" }), true);
+    expect(later).toMatchObject({ description: "", files: [], references: [], license: undefined });
+    expect(later.filesTruncated).toBe(false);
   });
 
   it("relays the allowed tools and the metadata of a skill", () => {

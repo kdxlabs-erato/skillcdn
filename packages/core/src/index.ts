@@ -522,6 +522,7 @@ export {
   queryLexemes,
   STEMMED_LANGUAGES,
   searchLexemes,
+  utf8Length,
   type WordRules,
   wordRulesOf,
 } from "./search/lexemes.js";
@@ -705,7 +706,9 @@ export {
 } from "./tools/render.js";
 export {
   BROWSE_DESCRIPTION_MAX_LENGTH,
+  COMMAND_OUTPUT_MAX_BYTES,
   compactSummary,
+  fitsCommandOutput,
   MCP_RESULT_MAX_BYTES,
   SEARCH_DESCRIPTION_MAX_LENGTH,
   serializedResultBytes,
@@ -756,3 +759,4 @@ export {
   type SkillServing,
   type SkillsPage,
 } from "./tools/results.js";
+export { fileShown, skillShown } from "./tools/shown.js";

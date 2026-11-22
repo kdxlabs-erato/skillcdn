@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  COMMAND_OUTPUT_MAX_BYTES,
   restCodeSchema,
   restFindSchema,
   restMountSchema,
@@ -9,14 +10,10 @@ import {
   restSkillSchema,
 } from "@skillcdn/core";
 import { describe, expect, it } from "vitest";
-import {
-  EXIT_MISSING,
-  EXIT_UNREADABLE,
-  EXIT_USAGE,
-  FILE_PAGE_CHARS,
-  OUTPUT_CHARS,
-  runCli,
-} from "./cli.js";
+import { EXIT_MISSING, EXIT_UNREADABLE, EXIT_USAGE, FILE_PAGE_CHARS, runCli } from "./cli.js";
+
+/** What a host counts of an output: its bytes of UTF-8. The command prints a line end after a read. */
+const bytesOf = (out: string): number => Buffer.byteLength(out.trimEnd(), "utf8");
 
 async function run(args: string[], environment: Record<string, string | undefined> = {}) {
   let out = "";
@@ -308,8 +305,8 @@ describe("the reads of a directory", () => {
         ]),
       ),
     });
-    const continuation =
-      /The skill continues\. Read the next part before using it: skillcdn skill (\S+) engineering\/big\/SKILL\.md --cursor (\S+)\n$/;
+    // The last line of a part that is not the last is the command that prints the next, alone.
+    const continuation = /\nskillcdn skill (\S+) engineering\/big\/SKILL\.md --cursor (\S+)\n$/;
     const parts: string[] = [];
     let cursor: string | undefined;
     do {
@@ -320,7 +317,7 @@ describe("the reads of a directory", () => {
         ...(cursor === undefined ? [] : ["--cursor", cursor]),
       ]);
       expect(code).toBe(0);
-      expect(out.length).toBeLessThanOrEqual(OUTPUT_CHARS + 1);
+      expect(bytesOf(out)).toBeLessThanOrEqual(COMMAND_OUTPUT_MAX_BYTES);
       parts.push(out);
       const next = continuation.exec(out);
       // The directory as it was given, quoted for a shell where it needs it.
@@ -333,6 +330,25 @@ describe("the reads of a directory", () => {
       expect(part).toContain("Skill context is incomplete.");
     }
     expect(parts.at(-1)).not.toContain("Skill context is incomplete.");
+    // A part that is not the last says how many pages of the skill follow it, at its head and at
+    // its end, where it says to read on now; the last says that the skill is complete (ADR-0124).
+    const left = parts.slice(0, -1).map((part) => {
+      const head =
+        /Skill context is incomplete\. (\d+) more pages? follows? this part\. Read the next part before using it: skillcdn skill \S+ engineering\/big\/SKILL\.md --cursor \S+\n/.exec(
+          part,
+        );
+      expect(head).not.toBeNull();
+      expect(part).toMatch(
+        /This part ends before the skill does: \d+ more pages? follows? this part, and what follows is part of its instructions\. Do not use the skill, plan from it or answer from it yet: read the next part now, and each one after it, until a part says the skill is complete:\nskillcdn skill \S+ engineering\/big\/SKILL\.md --cursor \S+\n$/,
+      );
+      return Number(head?.[1]);
+    });
+    expect(left.at(-1)).toBeGreaterThanOrEqual(1);
+    expect(left).toEqual([...left].sort((a, b) => b - a));
+    expect(new Set(left).size).toBe(left.length);
+    expect(parts.at(-1)?.endsWith("Skill context is complete: this was its last part.\n")).toBe(
+      true,
+    );
     // Each file is named at most once a part (#520), and every line of every file is printed
     // whole, but where a part ends inside it.
     for (const part of parts) {
@@ -449,7 +465,7 @@ describe("the reads of a directory", () => {
     const root = await repository({ ...PACK, "docs/long.md": `# Long\n\n${rows.join("\n")}\n` });
     const first = await run(["file", root, "docs/long.md"]);
     expect(first.code).toBe(0);
-    expect(first.out.length).toBeLessThanOrEqual(OUTPUT_CHARS);
+    expect(bytesOf(first.out)).toBeLessThanOrEqual(COMMAND_OUTPUT_MAX_BYTES);
     const next = /More follows: call skillcdn file with offset (\d+)\./.exec(first.out);
     const offset = Number(next?.[1]);
     expect(offset).toBeGreaterThan(0);
@@ -464,6 +480,157 @@ describe("the reads of a directory", () => {
       FILE_PAGE_CHARS,
     );
   });
+
+  it("counts what one read prints in bytes, whatever the script (ADR-0124)", async () => {
+    // Three bytes a character: a bound counted in characters lets a part through at three times
+    // what a host shows of one output.
+    const lines = (name: string) =>
+      Array.from(
+        { length: 500 },
+        (_, at) =>
+          `${name} 문서의 ${String(at).padStart(4, "0")}번째 줄: 독자는 이 줄을 통째로 읽는다.`,
+      );
+    const files = ["가", "나"];
+    const root = await repository({
+      ...PACK,
+      "engineering/hangul/SKILL.md": `---\nname: hangul\ndescription: 한글로 쓴 긴 스킬.\nskillcdn:\n  include:\n${files.map((name) => `    - references/${name}.md\n`).join("")}---\n# 한글\n\n모든 파일을 읽는다.\n`,
+      ...Object.fromEntries(
+        files.map((name) => [
+          `engineering/hangul/references/${name}.md`,
+          `${lines(name).join("\n")}\n`,
+        ]),
+      ),
+      "docs/hangul.md": `# 긴 문서\n\n${lines("긴").join("\n")}\n`,
+    });
+    const parts: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const { code, out } = await run([
+        "skill",
+        root,
+        "engineering/hangul/SKILL.md",
+        ...(cursor === undefined ? [] : ["--cursor", cursor]),
+      ]);
+      expect(code).toBe(0);
+      expect(bytesOf(out)).toBeLessThanOrEqual(COMMAND_OUTPUT_MAX_BYTES);
+      parts.push(out);
+      cursor = /--cursor (\S+)\n$/.exec(out)?.[1];
+      expect(parts.length).toBeLessThan(20);
+    } while (cursor !== undefined);
+    // Some ninety thousand bytes of included files: more parts than their characters would take.
+    expect(parts.length).toBeGreaterThan(3);
+    const printed = parts.join("\n");
+    expect(files.flatMap(lines).filter((line) => !printed.includes(line))).toEqual([]);
+    // A page of a file is what prints within the bound, ended after a line, and the pages are
+    // the file.
+    const read: string[] = [];
+    let offset: string | undefined;
+    do {
+      const { code, out } = await run([
+        "file",
+        root,
+        "docs/hangul.md",
+        ...(offset === undefined ? [] : ["--offset", offset]),
+      ]);
+      expect(code).toBe(0);
+      expect(bytesOf(out)).toBeLessThanOrEqual(COMMAND_OUTPUT_MAX_BYTES);
+      const content = out.slice(out.indexOf("--- content ---\n") + 16).trimEnd();
+      read.push(...content.split("\n").filter((line) => line.includes("번째 줄")));
+      offset = /More follows: call skillcdn file with offset (\d+)\./.exec(out)?.[1];
+      expect(read.length).toBeLessThanOrEqual(500);
+    } while (offset !== undefined);
+    expect(read).toEqual(lines("긴"));
+    // A length asked for that does not print within the bound is cut after a line and says to
+    // read on; one that does is given as measured, as a section is read.
+    const long = await run(["file", root, "docs/hangul.md", "--limit", "100000"]);
+    expect(bytesOf(long.out)).toBeLessThanOrEqual(COMMAND_OUTPUT_MAX_BYTES);
+    expect(long.out).toMatch(/More follows: call skillcdn file with offset \d+\./);
+    expect(long.out.trimEnd().endsWith("통째로 읽는다.")).toBe(true);
+    const section = await run(["file", root, "docs/hangul.md", "--offset", "8", "--limit", "40"]);
+    expect(section.out).toContain("The file continues at offset 48.");
+  }, 30_000);
+
+  it("lists a pack longer than one read prints in pages, and a folder or a search within it (ADR-0124)", async () => {
+    const number = (at: number) => String(at).padStart(3, "0");
+    // A description of some seven hundred characters of three bytes each, with a word to find.
+    const describes = (at: number) =>
+      `Does job ${number(at)}. ${"이 스킬은 한 가지 일을 맡아 끝까지 한다. ".repeat(28)}`.trim();
+    const count = 90;
+    const root = await repository({
+      ...PACK,
+      ...Object.fromEntries(
+        Array.from({ length: count }, (_, at) => [
+          `skills/job-${number(at)}/SKILL.md`,
+          `---\nname: job-${number(at)}\ndescription: ${describes(at)}\n---\n# Job\n\nDo it.\n`,
+        ]),
+      ),
+    });
+    const continuation = /\n\nThe listing goes on: skillcdn skills (\S+) --cursor (\S+)\n$/;
+    const pages: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const { code, out } = await run([
+        "skills",
+        root,
+        ...(cursor === undefined ? [] : ["--cursor", cursor]),
+      ]);
+      expect(code).toBe(0);
+      expect(bytesOf(out)).toBeLessThanOrEqual(COMMAND_OUTPUT_MAX_BYTES);
+      pages.push(out);
+      const next = continuation.exec(out);
+      if (next !== null) expect(next[1]?.replace(/^'(.*)'$/, "$1")).toBe(root);
+      cursor = next?.[2];
+      expect(pages.length).toBeLessThan(40);
+    } while (cursor !== undefined);
+    expect(pages.length).toBeGreaterThan(2);
+    // What a client is told on connect is said once, and a later page says that it goes on.
+    expect(pages[0]).toContain("Skills and documents from");
+    expect(pages[0]).toContain(`${count + 2} skills and 1 document in`);
+    expect(pages[0]).toMatch(/\d+ skills are outside this page; continue with nextCursor\./);
+    for (const page of pages.slice(1)) {
+      expect(page.startsWith("Continued from the page before. This page lists:\n")).toBe(true);
+      expect(page).not.toContain("Skills and documents from");
+    }
+    expect(pages.at(-1)?.endsWith("The listing is complete: this was its last page.\n")).toBe(true);
+    // Every skill is listed once, and so is the document.
+    const listed = pages.join("\n");
+    for (let at = 0; at < count; at += 1) {
+      expect(listed.split(`skill: job-${number(at)} (`).length).toBe(2);
+    }
+    expect(listed.split("document: docs/guide.md").length).toBe(2);
+    // A cursor of nothing is refused as a misuse, as for any read.
+    expect((await run(["skills", root, "--cursor", "bm90LWEtY3Vyc29y"])).code).toBe(EXIT_USAGE);
+    // A page of a folder holds no more entries than print within the bound, whatever was asked,
+    // and names the cursor that goes on.
+    const folder: string[] = [];
+    cursor = undefined;
+    do {
+      const { code, out } = await run([
+        "browse",
+        root,
+        "skills",
+        "--limit",
+        "200",
+        ...(cursor === undefined ? [] : ["--cursor", cursor]),
+      ]);
+      expect(code).toBe(0);
+      expect(bytesOf(out)).toBeLessThanOrEqual(COMMAND_OUTPUT_MAX_BYTES);
+      folder.push(out);
+      cursor = /nextCursor: "([^"]+)"/.exec(out)?.[1];
+      expect(folder.length).toBeLessThan(40);
+    } while (cursor !== undefined);
+    expect(folder.length).toBeGreaterThan(1);
+    const entries = folder.join("\n");
+    for (let at = 0; at < count; at += 1) {
+      expect(entries.split(`skills/job-${number(at)}/SKILL.md`).length).toBe(2);
+    }
+    // And so does a page of what the words find, at the most results one page takes.
+    const found = await run(["find", root, "job", "--limit", "25"]);
+    expect(found.code).toBe(0);
+    expect(found.out).toMatch(/^\d+ results for "job"/);
+    expect(bytesOf(found.out)).toBeLessThanOrEqual(COMMAND_OUTPUT_MAX_BYTES);
+    // Each read indexes the directory again: some twenty of them.
+  }, 30_000);
 
   it("refuses what cannot be read or is not asked right", async () => {
     const root = await repository(PACK);

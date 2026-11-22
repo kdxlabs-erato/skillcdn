@@ -35,6 +35,12 @@ export interface ToolWords {
    * command prints a skill in parts (ADR-0108), and a section cut there continues in the next part.
    */
   readonly piece?: string | undefined;
+  /**
+   * The line that reads on with a skill from a cursor, where a reader runs a line and does not
+   * call `load` with a path and a cursor: the command that prints the next part, whole (ADR-0124).
+   * It is said at the head of a part and is the last line of it, so it only makes the line.
+   */
+  readonly loadNext?: ((path: string, cursor: string) => string) | undefined;
 }
 
 /** The tools as the MCP endpoint names them (docs/specs/tools.md). */
@@ -697,22 +703,29 @@ export function renderSkillResult(result: SkillResult, words: ToolWords = MCP_TO
     result.path ?? `${result.directory.length === 0 ? "" : `${result.directory}/`}SKILL.md`;
   const unlisted = result.referencesUnlisted;
   const folder = `${words.browse} ${JSON.stringify({ path: result.directory })}`;
-  // How many pages are left is said where the reads are pages: a part the command prints is
-  // a run of them, and the command says itself what reads the next.
-  const left = words.piece === undefined ? result.pagesLeft : undefined;
+  // How much is left is counted in pages whatever one read is called: a part the command prints
+  // is a run of them (ADR-0108), so the count is of the skill's pages, and never under what is
+  // left to read.
+  const unit = words.piece ?? "page";
+  const left = result.pagesLeft;
   const follow =
     left === undefined || left === 0
       ? undefined
-      : `${left} more ${left === 1 ? "page follows" : "pages follow"} this one`;
-  const next =
-    result.complete === false && result.nextCursor !== undefined
-      ? `${words.load} with path ${JSON.stringify(result.path)} and cursor ${JSON.stringify(result.nextCursor)}`
+      : `${left} more ${left === 1 ? "page follows" : "pages follow"} this ${words.piece ?? "one"}`;
+  const goesOn = result.complete === false && result.nextCursor !== undefined;
+  const next = goesOn
+    ? `${words.load} with path ${JSON.stringify(result.path)} and cursor ${JSON.stringify(result.nextCursor)}`
+    : undefined;
+  // Where a reader runs a line, the line itself: said at the head, and the last line of the read.
+  const line =
+    goesOn && result.nextCursor !== undefined
+      ? words.loadNext?.(source, result.nextCursor)
       : undefined;
 
   return joinSections([
     header.join("\n"),
     result.complete === false
-      ? `Skill context is incomplete.${next === undefined ? " Resolve the warnings before using this skill." : `${follow === undefined ? "" : ` ${follow}.`} Continue ${next} before using it.`}`
+      ? `Skill context is incomplete.${next === undefined ? " Resolve the warnings before using this skill." : `${follow === undefined ? "" : ` ${follow}.`} ${line === undefined ? `Continue ${next} before using it.` : `Read the next ${unit} before using it: ${line}`}`}`
       : undefined,
     files,
     oversized,
@@ -735,11 +748,15 @@ export function renderSkillResult(result: SkillResult, words: ToolWords = MCP_TO
     renderPackReferences(result.packReferences, words),
     // The end of a page is what a reader has just read when it decides what to do next: there
     // it is told once more that the skill goes on, how far, and the call that goes on with it.
-    follow !== undefined && next !== undefined
-      ? `This page ends before the skill does: ${follow}, and what follows is part of its instructions. Do not use the skill or answer from it yet: continue ${next}, and go on until a page says the skill is complete.`
-      : left === 0 && result.complete === true
-        ? "Skill context is complete: this was its last page."
-        : undefined,
+    // A reader that runs a line is given the line last, on a line of its own, and is told with
+    // or without the count: a pack that counts no pages still says that the skill goes on.
+    line !== undefined
+      ? `This ${unit} ends before the skill does: ${follow === undefined ? "" : `${follow}, and `}what follows is part of its instructions. Do not use the skill, plan from it or answer from it yet: read the next ${unit} now, and each one after it, until a ${unit} says the skill is complete:\n${line}`
+      : follow !== undefined && next !== undefined
+        ? `This ${unit} ends before the skill does: ${follow}, and what follows is part of its instructions. Do not use the skill or answer from it yet: continue ${next}, and go on until a ${unit} says the skill is complete.`
+        : left === 0 && result.complete === true
+          ? `Skill context is complete: this was its last ${unit}.`
+          : undefined,
   ]);
 }
 
