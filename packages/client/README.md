@@ -28,6 +28,8 @@ if (address.ok) {
 
 ## What it exports
 
+The entry points, and what each is for. The table names what you start from, not every export: the constants, helpers and types beside them are in the declarations the package ships, with the doc comments they carry, which an editor shows.
+
 | Export | What it does |
 |---|---|
 | `createClient(options)` | A `SkillCdnClient` at `baseUrl`: `mount`, `browse`, `find`, `skill`, `file`, `rows`, `code`, `listing` and `listed` read an address, with the `token` of the deployment as the bearer of each request where one is given (an access token or a repository token, [permissions](https://github.com/skillcdn/skillcdn/blob/main/docs/specs/permissions.md)); `featured`, `showcase`, `legal` and `owner` read what a deployment shows everyone, and `search(query, limit)` searches across every pack it serves; `connect` and `claimConnection` are a command's side of connecting with a code a person approves, sent as nobody; `me` and the rest under it belong to whoever is signed in on the deployment's own pages, by their session, which a browser sends. `fetch`, `userAgent`, `timeoutMs` and `maxBodyBytes` are optional. A redirect is never followed. |

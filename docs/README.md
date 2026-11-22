@@ -13,7 +13,7 @@ How the docs are organized, and what each one is for. The rules for *when* to up
 | [`nav.json`](nav.json) | Which files the pages of a deployment publish under `/docs`, in which sections and order, with an optional slug, title and description each ([ADR-0049](adr/0049-the-documentation-is-rendered-into-the-pages-from-the-repositorys-own-files.md)). A file that is not listed is not published. The build fails on a link that leads nowhere. | Living. |
 | [`adr/`](adr/) | Decisions with lasting consequences, and why. | Append-only. Accepted ADRs are superseded, never edited. |
 | [`../deploy/README.md`](../deploy/README.md) | Building, configuring and releasing the image; the contract with the infrastructure that runs it. | Living. |
-| `<workspace>/README.md` | What a package is for, its public surface, how to work on it, and under "Rules" the rules for changing it. | Living. |
+| `<workspace>/README.md` | What a package is for, its entry points and what each is for, how to work on it, and under "Rules" the rules for changing it. Not a list of every export: those are described where they are declared. | Living. |
 | [`../AGENTS.md`](../AGENTS.md) | The working agreement: the rules for changing the code, for agents and humans. | Living. Short. |
 | [`../apps/web/connect-guide.md`](../apps/web/connect-guide.md) | What the connection guide on the page of a repository shows for each client, and the sources it was checked against. | Living. The clients' menus change on their own; recheck the sources when the steps change. |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md), [`../SECURITY.md`](../SECURITY.md) | How to contribute, and how to report a vulnerability. | Living. |

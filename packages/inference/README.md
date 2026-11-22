@@ -13,6 +13,8 @@ The `Embedder` and `Reranker` ports of [`@skillcdn/core`](https://www.npmjs.com/
 
 ## What it exports
 
+The entry points, and what each is for. The table names what you start from, not every export: the constants, helpers and types beside them are in the declarations the package ships, with the doc comments they carry, which an editor shows.
+
 | Export | What it does |
 |---|---|
 | `createEmbeddingsApi(options)` | An `Embedder` over the common embeddings shape: the URL, the model, the dimensions every vector is cut to (a longer vector is cut and normalized, as the models trained for it allow), the one-line instruction put in front of a query and never of a document, a bearer key, and how much one call takes (`maxTexts`, `maxTextChars`, `maxBatchChars`), with every text cut to its characters and then to the tokens `estimatedTokens` of `@skillcdn/core` estimates it to be (`maxTextTokens`, 4,096 unless said). |

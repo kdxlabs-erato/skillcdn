@@ -124,7 +124,7 @@ Documentation is part of the change, not a follow-up. A future session starts wi
 | Environment variables or configuration | config module, `.env.example`, the table in `deploy/README.md` |
 | Database schema | migration, `packages/db/README.md` data model |
 | Build, image or CI | `deploy/README.md` |
-| A package's public surface or usage | that package's `README.md` |
+| A package's entry points or how it is used | that package's `README.md`, which names the entry points and what each is for, never every export: a constant, a helper or a type beside them is described where it is declared, in its doc comment |
 | A roadmap item is started, finished or dropped | `docs/roadmap.md`, as its first section says an entry is written |
 | A rule or a gotcha of one workspace | "Rules" or "Gotchas" in that workspace's `README.md` |
 | You learned a durable gotcha the hard way | "Gotchas" here, or in the workspace's `README.md` when it is that workspace's alone |

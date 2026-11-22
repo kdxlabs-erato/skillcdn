@@ -13,6 +13,8 @@ What a [SkillCDN](https://skillcdn.ai) address serves, as code that serves it an
 
 ## What it exports
 
+The entry points, and what each is for. The table names what you start from, not every export: the constants, helpers and types beside them are in the declarations the package ships, with the doc comments they carry, which an editor shows.
+
 | Export | What it does |
 |---|---|
 | `createMountServer(mount, dependencies, request)` | The MCP server of one mount: `browse_repo`, `search_repo`, `load_skill`, `read_repo_file`, the `use_skill` prompt, and `skills/list`, `skills/get`, `resources/read`, `resources/directory/read` and `resources/list` of the skills extension, over `dependencies.reader`. `hooks` receive what a deployment counts; `request.origin` names where the server's page and icon are. One instance per connection or request. |

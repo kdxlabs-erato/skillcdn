@@ -17,6 +17,8 @@ npm install @skillcdn/core
 
 ## What belongs here
 
+By area, with the names to start from. The table does not name every export: the rest are in the declarations the package ships, with the doc comments they carry, which an editor shows.
+
 | Area | Spec |
 |---|---|
 | Address parser and formatter | [address.md](https://github.com/skillcdn/skillcdn/blob/main/docs/specs/address.md) |

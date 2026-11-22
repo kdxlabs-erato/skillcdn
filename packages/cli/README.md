@@ -132,6 +132,8 @@ const part = await readPack(pack, { read: "skill", path: "marketing/ads/SKILL.md
 console.log(part.text);
 ```
 
+The entry points, and what each is for. The table names what you start from, not every export: the constants, helpers and types beside them are in the declarations the package ships, with the doc comments they carry, which an editor shows.
+
 | Export | What it is |
 |---|---|
 | `readPack(pack, read, options)` | One read, as the command prints it: `skills`, `browse`, `find`, `skill` (in parts within `OUTPUT_CHARS`, the last line from `nextPart`), `file` (`FILE_PAGE_CHARS` ended at a line unless a limit is given), `rows` and `code`. It answers `{ text }`, and for the data reads `holds` as well, what the text holds, for `wroteLine` when you write it to a file. `json` gives the REST API's JSON instead. `words` names the reads in the text, `COMMAND_WORDS` by default, and may name what the next read of a long skill is called (`piece`, "part" by default). The mount is asked for once by a read that prints the pack and its commit, and not at all by `rows`, `code` and the reads with `json`; a pack that pages a skill or its listing without end is given up on as `invalid_response`. |

@@ -15,6 +15,8 @@ Node.js only: it hashes bytes and, for `checkDirectory`, reads a directory. No n
 
 ## What it exports
 
+The entry points, and what each is for. The table names what you start from, not every export: the constants, helpers and types beside them are in the declarations the package ships, with the doc comments they carry, which an editor shows.
+
 | Export | What it does |
 |---|---|
 | `buildSnapshotIndex(options)` | Reads one commit through the reading side of the git-host port into a `SnapshotIndex`: the served set, the search vector of every searchable entry, built with the word rules of the language the nearest manifest declares and kept as it is by every store (ADR-0063), with the headings of a document weighed above its body, every skill with its digest, the license, and the diagnostics for the author, a dead local link, a picture without words, a picture or an original that is not there and a skill's reference to a file that is not text among them (ADR-0076). The bodies the store lacks are fetched in one archive before the rounds only when the archive is not much larger than what is needed, so that a pack full of originals is read file by file (ADR-0077). Partial under the limits, never failing because of them. |

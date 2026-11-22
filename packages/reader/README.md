@@ -15,6 +15,8 @@ Node.js only. No network, no database, no environment of its own: the index come
 
 ## What it exports
 
+The entry points, and what each is for. The table names what you start from, not every export: the constants, helpers and types beside them are in the declarations the package ships, with the doc comments they carry, which an editor shows.
+
 | Export | What it does |
 |---|---|
 | `Reader` | The reads over a mount: `summary`, `catalog`, `overview`, `browse`, `find`, `skill`, `file`, `rawFile`, `rows` and `code` for the tables and code blocks of a document as data, and `listSkills`, `getSkill`, `readResource`, `readDirectory` for the skills extension. Each takes a `MountContext` and answers data, a result or why the index is not ready; the MCP tools and the REST bodies of `@skillcdn/core` are written from them. A file that is not text is answered with where its bytes are, never fetched when its name says what it is, and a Git LFS pointer with where the host serves the file ([ADR-0077](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0077-the-bytes-of-a-file-that-is-not-text-are-sent-from-where-they-are.md)); `rawFile` says whether a file is served, for whoever sends its bytes. |
