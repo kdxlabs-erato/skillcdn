@@ -1,6 +1,6 @@
 # Spec: address scheme
 
-- Status: **Draft.** The grammar gained `local` addresses since milestone 1 ([ADR-0053](../adr/0053-an-address-may-name-a-pack-served-from-a-machine.md)) and otherwise stands; it becomes normative when the specifications are declared stable ([ADR-0058](../adr/0058-the-published-packages-share-one-version.md)). What a ref may resolve to is decided in [ADR-0039](../adr/0039-an-address-serves-only-what-is-the-repositorys-own.md).
+- Status: **Draft.** The grammar gained `local` addresses since it was first written ([ADR-0053](../adr/0053-an-address-may-name-a-pack-served-from-a-machine.md)) and otherwise stands; it becomes normative when the specifications are declared stable ([ADR-0058](../adr/0058-the-published-packages-share-one-version.md)). What a ref may resolve to is decided in [ADR-0039](../adr/0039-an-address-serves-only-what-is-the-repositorys-own.md).
 - Implemented by: `packages/core` (`parseAddress`, `formatAddress`). Nothing else parses addresses.
 
 An address identifies the pack an agent mounts: a repository, or a folder of it, at a ref ([the format](skill-repo.md)). It is the path of the MCP endpoint URL, so the whole onboarding is one URL.
