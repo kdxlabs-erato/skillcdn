@@ -9,7 +9,7 @@
   <a href="https://github.com/skillcdn/skillcdn/blob/main/LICENSE.md"><img alt="License: FSL-1.1-ALv2" src="https://img.shields.io/badge/license-FSL--1.1--ALv2-3a6dd4"></a>
 </p>
 
-What a [SkillCDN](https://skillcdn.ai) address serves, as code that serves it anywhere: the four tools, the prompt and the MCP skills extension of [the MCP surface](https://github.com/skillcdn/skillcdn/blob/main/docs/specs/tools.md), and the five routes of [the REST API](https://github.com/skillcdn/skillcdn/blob/main/docs/specs/rest.md) that read an address, over the reader of [`@skillcdn/reader`](https://www.npmjs.com/package/@skillcdn/reader). The server of a deployment composes it with its own mounts, its sign-in and its statistics; the `skillcdn` command serves a directory with it, over stdio to one agent or over HTTP to any ([ADR-0057](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0057-a-directory-is-served-by-the-command-over-stdio-and-http.md)).
+What a [SkillCDN](https://skillcdn.ai) address serves, as code that serves it anywhere: the four tools, the prompt and the MCP skills extension of [the MCP surface](https://github.com/skillcdn/skillcdn/blob/main/docs/specs/tools.md), and the routes of [the REST API](https://github.com/skillcdn/skillcdn/blob/main/docs/specs/rest.md) that read an address, over the reader of [`@skillcdn/reader`](https://www.npmjs.com/package/@skillcdn/reader). The server of a deployment composes it with its own mounts, its sign-in and its statistics; the `skillcdn` command serves a directory with it, over stdio to one agent or over HTTP to any ([ADR-0057](https://github.com/skillcdn/skillcdn/blob/main/docs/adr/0057-a-directory-is-served-by-the-command-over-stdio-and-http.md)).
 
 ## What it exports
 

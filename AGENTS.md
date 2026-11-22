@@ -50,11 +50,12 @@ packages/
   cli/        the skillcdn command: check a pack, read one as an agent gets it over MCP, serve a directory, write the table of its skills; its reads as a library   @skillcdn/cli on npm
   brand/      the pictures of the brand as files, under the trademark policy; no code   @skillcdn/brand on npm
 apps/server/fixtures/.repositories/  test-only repository fixtures; the public reference pack is skillcdn/skills
-deploy/       Dockerfile, compose files, the contract for whoever operates the image
+deploy/       Dockerfile, the compose bundle with its install and bundle scripts, the contract for whoever operates the image
+scripts/      the checks of `pnpm check` that are no linter's: text safety, licenses
 docs/         architecture, specs, ADRs, roadmap, user guides; nav.json lists what the pages publish under /docs
 ```
 
-Two reference repositories sit beside this one and are never imported from it: `skillcdn/skills`, the reference pack, and `skillcdn/console`, the reference console for an organization that runs its work with agents. Both are examples that follow the standard and are meant for real use; the console consumes the published packages and the REST API like any other consumer and defines nothing of the specification ([ADR-0047](docs/adr/0047-the-console-is-a-separate-repository-built-on-the-published-packages.md)).
+Two reference repositories sit beside this one and are never imported from it: `skillcdn/skills`, the reference pack, skills for a company's work by area, and `skillcdn/console`, the reference console, the board where an organization's people and its agents, agent accounts among them, work. Both are examples that follow the standard and are meant for real use; the console consumes the published packages and the REST API like any other consumer and defines nothing of the specification ([ADR-0047](docs/adr/0047-the-console-is-a-separate-repository-built-on-the-published-packages.md)).
 
 Dependencies point inward only: `server → db, github, indexer, inference, reader, serve → core`, `serve → core, reader`, `client → core`, `inference → core`, `cli → core, indexer, inference, reader, client, serve`, and `web → core, brand, client`. `core` imports nothing from the workspace and nothing from Node; `brand` is files and imports nothing. `web` may import `core`, `brand` and `client` and nothing else. A package can only import what its own `package.json` declares, and only from another package's entry point (never `@skillcdn/x/src/...`). Changing these edges needs an ADR.
 
@@ -86,7 +87,7 @@ Packages compile to `dist/` and consume each other's compiled output. Going thro
 
 **Where the work is tracked.** A maintainer's clone may work in a project of their SkillCDN console, bound once with `console use <key>`. The `.skillcdn-console.json` that writes names the console, so this public repository ignores it and never commits it (rule 7). In a bound clone `console whoami` names the project, named by this checkout's file; a project named by a folder above or by `CONSOLE_PROJECT`, or a refusal, means the clone is bound wrong: tell the person what it printed, whole, and do no board work until it is bound or they say otherwise. A clone bound to no project, a contributor's or one its maintainer has not bound, is worked without a console.
 
-**Before you start.** Read this file and the workspace's `README.md`, its Rules first. Check [docs/roadmap.md](docs/roadmap.md) for the current milestone, [docs/specs/](docs/specs/) for the contract you are implementing, and [docs/adr/](docs/adr/) before questioning a past decision. If a product decision is missing, do not guess: add it to the spec's open questions or ask.
+**Before you start.** Read this file and the workspace's `README.md`, its Rules first. Check [docs/roadmap.md](docs/roadmap.md) for what is in progress and what is next, [docs/specs/](docs/specs/) for the contract you are implementing, and [docs/adr/](docs/adr/) before questioning a past decision. If a product decision is missing, do not guess: add it to the spec's open questions or ask.
 
 **While working.** Stay inside the task's scope: no drive-by reformatting, renames or dependency bumps. Prefer the boring solution; add an abstraction when the second use appears, not before.
 
@@ -124,7 +125,7 @@ Documentation is part of the change, not a follow-up. A future session starts wi
 | Database schema | migration, `packages/db/README.md` data model |
 | Build, image or CI | `deploy/README.md` |
 | A package's public surface or usage | that package's `README.md` |
-| A milestone item is started, finished or dropped | `docs/roadmap.md` |
+| A roadmap item is started, finished or dropped | `docs/roadmap.md`, as its first section says an entry is written |
 | A rule or a gotcha of one workspace | "Rules" or "Gotchas" in that workspace's `README.md` |
 | You learned a durable gotcha the hard way | "Gotchas" here, or in the workspace's `README.md` when it is that workspace's alone |
 
@@ -137,7 +138,7 @@ Keep docs lean: current facts and decisions, not history or essays. Git history 
 - **TypeScript:** strict, ESM, `.js` extensions in relative imports, erasable syntax only (no `enum`, `namespace` or parameter properties). Named exports only. No `any`; take `unknown` and narrow.
 - **Boundaries validate, interiors trust.** Parse every external input once at the edge (HTTP, MCP arguments, env, repo files, webhook payloads, JSON columns) with a schema; pass typed values inward.
 - **Configuration:** `process.env` is read only in `apps/server/src/config/` and in `packages/cli/src/bin.ts` (lint enforces it; integration tests and build scripts are exempt). Everything else receives typed config as an argument. Every tunable has a safe default.
-- **Ports and adapters:** `core` defines interfaces (git host, blob store, index store, entitlements, usage sink, clock); adapters implement them; `apps/server` wires them together. Do not import an SDK outside its adapter.
+- **Ports and adapters:** `core` defines interfaces (git host, blob store, index store, entitlements, usage sink, embedder, reranker, clock); adapters implement them; `apps/server` wires them together. Do not import an SDK outside its adapter.
 - **Errors:** throw `Error` subclasses with a stable `code`. Translate to HTTP or MCP errors only at the edge, and never leak internals or the existence of private resources.
 - **Logging:** structured logger only, no `console` (lint enforces it). Never log tokens, authorization headers or private file content.
 - **Determinism:** inject time, randomness and ids so `core` stays pure and tests stay stable.

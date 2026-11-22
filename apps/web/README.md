@@ -75,7 +75,7 @@ The integrated server's default port is **11188**. To serve the built UI there a
 | Social-preview images | `public/og/og-<language>.png`, 1200 x 630. Replace the files, or restyle `src/pages/og-card.tsx` and take new screenshots of `/dev/og?lang=en` and `/dev/og?lang=ko` in a 1200 x 630 window (a headless browser with `--screenshot` and `--window-size=1200,630` does; force the language, since the page otherwise follows the browser's). Retake them whenever the hero copy or the first entry's poster changes. The page of an address and a page of the documentation name a card the server draws instead (`/social/...`); `socialCard` in [`src/social.ts`](src/social.ts) and `docsSocialCard` in [`src/entry-server.tsx`](src/entry-server.tsx) write their words. |
 | What machines read | [`src/seo/head.ts`](src/seo/head.ts): title, description, canonical and alternate URLs, the social-preview tags and the structured data (the site as one organization with its search as a search action, the application, the first clip of the showcase where there is one, and the questions; the page of a term as a page of results; a page of the documentation as an article with its breadcrumbs). The page of a term is offered to search engines once it has `SEARCH_INDEX_MIN_RESULTS` results, and says `noindex` otherwise. `renderLlmsTxt` in [`src/entry-server.tsx`](src/entry-server.tsx) writes `llms.txt` from the same words, with the documentation listed as Markdown, and `renderLlmsFullTxt` writes every page into `llms-full.txt`. The words themselves live in `meta` in the language packs; `meta.landing.about` is the one plain sentence that says what SkillCDN is. |
 
-Styles are CSS modules: a class is local to its component, so renaming or restyling one cannot break another. Breakpoints are `40rem`, `52rem` and `60rem`.
+Styles are CSS modules: a class is local to its component, so renaming or restyling one cannot break another. Breakpoints are `40rem`, `52rem` and `60rem`, and `64rem` and `80rem` on the documentation pages, for their second and third columns.
 
 ## Repository explorer
 
@@ -130,7 +130,7 @@ pnpm turbo run build --filter=@skillcdn/web^...
 SKILLCDN_WEB_CONFIG=/srv/acme-ui/site.config.tsx pnpm --filter @skillcdn/web run build
 ```
 
-[`examples/site`](examples/site) is a configuration with one page, which the tests render.
+[`examples/site`](examples/site/site.config.tsx) is a configuration with one page, which the tests render.
 
 - **What a page is given** (`SitePageContext` in [`src/site-pages.ts`](src/site-pages.ts)): `client`, the REST API of the deployment as `@skillcdn/client` types it; `language` and `words`, the tag of the language shown and the product's words in it; `origin`; `search`, the query of the page's address, where a page keeps what it shows; and `navigation`, `go` and `replace`, which move to another page without loading a document. A page brings its own words, by language.
 - **Where a page lives:** `/pages/<key>`, the same in every language; `sitePageHref(key)` names it. A key is lowercase letters, digits and hyphens, and a build fails on one that is not, or on a key twice.

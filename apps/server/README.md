@@ -6,7 +6,7 @@ The single deployable. One build, one container image, several process roles ([A
 |---|---|---|---|
 | `api` | `node dist/main.js api` | MCP over HTTP and the [REST API](../../docs/specs/rest.md), and, where it is configured, signing in, private repositories and the OAuth authorization server of the deployment's addresses ([permissions](../../docs/specs/permissions.md)). Where the deployment shares a secret with the git host's app, it also receives the host's events ([ADR-0038](../../docs/adr/0038-the-git-hosts-events-end-what-is-remembered.md)). Stateless. | implemented |
 | `migrate` | `node dist/main.js migrate` | Apply pending database migrations, then exit. | implemented |
-| `check` | `node dist/main.js check [directory]` | Read a directory as the indexer reads a commit and print what an agent would get: for repository authors, before they push ([convention](../../docs/specs/skill-repo.md), "Checking a repository before pushing"). Needs no database and no git host; exits with `1` when index diagnostics are present. The same code is the `skillcdn check` command of [`@skillcdn/cli`](../../packages/cli/README.md); the role stays for whoever has the image. From this checkout: `pnpm --filter @skillcdn/server run start check ../skills`. | implemented |
+| `check` | `node dist/main.js check [directory]` | Read a directory as the indexer reads a commit and print what an agent would get: for repository authors, before they push ([convention](../../docs/specs/skill-repo.md), "Checking a repository before pushing"). Needs no database and no git host; exits with `1` when index diagnostics are present. The same code is the `skillcdn check` command of [`@skillcdn/cli`](../../packages/cli/README.md); the role stays for whoever has the image. From this checkout, for one of the fixture packs: `pnpm --filter @skillcdn/server run start check fixtures/.repositories/multi-skill`. | implemented |
 | `purge` | `node dist/main.js purge /gh/owner/repo` | Remove what was indexed for a repository: its snapshots, their index entries, its cached refs and the file bodies nothing references any more ([ADR-0026](../../docs/adr/0026-serving-follows-the-license-and-the-operators-lists.md)). Exits with `1` when the repository was never indexed. The same purge is `POST /admin/v1/purge/gh/owner/repo`. | implemented |
 | `worker` | `node dist/main.js worker` | Run the jobs of the queue ([ADR-0064](../../docs/adr/0064-meaning-search-runs-on-pgvector-and-pg-boss-behind-an-embedder-port.md), [deploy](../../deploy/README.md#the-worker)): index a repository on request, embed the sections of indexed commits where an embedder is configured and the database keeps vectors, and sweep hourly for what is served and not yet embedded under the configured model. It indexes packs ahead of the requests for them, when the git host announces a push and when a ref's time is up ([ADR-0085](../../docs/adr/0085-the-worker-indexes-a-pack-ahead-of-the-requests-for-it.md)); `api` indexes on request as before, unless `INDEX_CONCURRENCY=0` leaves indexing to another process. | implemented |
 
@@ -56,7 +56,8 @@ src/
                  the queue takes them, by the repository's rank (queues.ts), one slice of the embedding
                  of a snapshot (embed-snapshot.ts), the indexing of a repository on request
                  (index-repository.ts) and ahead of requests, a pass and a look per repository
-                 (index-ahead.ts), the hourly removal of the indexes nothing keeps (prune.ts), the sweep that puts what waits in order, backfills the ranked
+                 (index-ahead.ts), the hourly removal of the indexes nothing keeps (prune.ts), the pass
+                 that keeps the copy of the entries searched across the packs (hub-entries.ts, ADR-0104), the sweep that puts what waits in order, backfills the ranked
                  repositories and drops a replaced model (sweep.ts), what may be embedded under the scope and the
                  entitlements (scope.ts), when the api queues an embedding (triggers.ts), what the operator
                  reads and asks of it through the admin API (reads.ts), and the worker wired to its
@@ -66,7 +67,9 @@ src/
                  credentials.ts (the person's token of the host, encrypted, renewed, forgotten when
                  lost), permissions.ts (whether a person can see a repository, as the host says),
                  repo-tokens.ts (the tokens people make for agents with nobody to sign in,
-                 ADR-0040), and oauth/: the authorization server, its clients (registered, or a metadata
+                 ADR-0040), connections.ts (a command connecting with a code a person approves,
+                 ADR-0059), pack-tokens.ts (the tokens an operator makes for the packs of the
+                 deployment's own directory, ADR-0088), and oauth/: the authorization server, its clients (registered, or a metadata
                  document fetched from the public internet only) and the rules for redirect URIs
   events/        what the git host says happened, applied to what is remembered (ADR-0038): refs
                  and names made due, answers forgotten, the index of a repository the app was taken
@@ -83,13 +86,21 @@ src/
                  the operator's showcase,
                  the deployment's own pages at /terms and /privacy, and the words of the social
                  preview of an address, drawn at /social/<address>; the owner's picture as the
-                 icon of an address's MCP server at /icon/<address>; crawlers.ts tells a crawler or
+                 icon of an address's MCP server at /icon/<address>; the badge of an address for
+                 a README at /badge/<address>; crawlers.ts tells a crawler or
                  a link preview by its User-Agent, whose look starts nothing (ADR-0074);
                  webhooks.ts receives the git host's deliveries at /webhooks/gh; auth.ts registers everything
                  people sign in with: /auth/*, /api/v1/me/*, the consent page's two questions, and
                  the OAuth endpoints with their metadata
   operator/      the operator's lists, the landing showcase with its uploads, the pictures of
-                 addresses, and the deployment's own pages (ADR-0026, ADR-0028, ADR-0029, ADR-0031)
+                 addresses, and the deployment's own pages (ADR-0026, ADR-0028, ADR-0029, ADR-0031);
+                 entitlements.ts puts the blocked list in front of whatever else decides
+  directory/     the packs of the deployment's own directory (ADR-0071): directory-host.ts reads
+                 a working tree behind the git-host port, the hash of the tree as its commit
+  search/        the search across every pack (ADR-0070): hub.ts answers it, by words and by
+                 meaning; cache.ts keeps its answers for a while and bounds how many run at once
+  retrieval/     what `eval:search` runs: the questions of the evaluation sets asked of an index
+                 in memory, and the report of what they found (fixtures/retrieval/README.md)
   social/        the social preview of an address (ADR-0032): the card drawn with a canvas from the
                  words the web build writes, the owner's picture fetched for it and for the icon,
                  and both kept
@@ -118,7 +129,7 @@ Create directories when they get their first file. Do not add empty scaffolding.
 
 ## Process contract
 
-- Exit codes: `64` for a usage error, `78` for invalid configuration, `70` for an internal failure or a role that is not implemented yet.
+- Exit codes: `64` for a usage error, `78` for invalid configuration, `70` for an internal failure.
 - `GET /healthz` is liveness. `GET /readyz` is readiness: database reachable, schema at least at the version this build ships, and not shutting down.
 - `SIGTERM` or `SIGINT`: readiness fails, the listener stops accepting, requests in flight finish, unfinished indexing is handed back to the database, and the process exits within `SHUTDOWN_GRACE_SECONDS`.
 - All configuration comes from the environment; see [`.env.example`](../../.env.example) and [`deploy/README.md`](../../deploy/README.md).
@@ -140,6 +151,7 @@ Create directories when they get their first file. Do not add empty scaffolding.
 - `src/pack-tokens.int.test.ts` covers a deployment that reads the packs of its directory with a token only (ADR-0088): one answer for a pack and for a name that is nothing to a request that presents nothing, over REST, over MCP and on the pages; a token for one pack and for every pack, made, listed and removed through the admin API; a token ending at its time; nothing that lists what everyone is served naming such a pack; and the worker indexing the directory all the same.
 - `src/retention.int.test.ts` covers which indexes are kept (ADR-0086): the commit a ref points at and the one before it whatever their age, a commit a ref moved on from and a pinned commit while they are read, the bodies nothing names any more removed with them, an index being built left alone, and a read noted at most once an hour.
 - `src/memory-index.int.test.ts` holds the reader over an index in memory and over the index the database keeps to the same answers from the same fixture (ADR-0053, ADR-0054). `src/stats.int.test.ts` covers the usage statistics: what an MCP session and REST reads count, distinct clients by keyed hash folded when the day is over, the names of client apps, and writes that pile up or fail.
+- The rest, each named for what it covers: `src/directory-packs.int.test.ts` (a deployment with a directory of packs), `src/hub.int.test.ts` and `src/hub-entries.int.test.ts` (the search across every pack, and the copy of the entries it reads), `src/index-now.int.test.ts` (what a person may ask of a repository's index), `src/serving.int.test.ts` (a moving ref whose newest commit is not ready) and `src/worker-rollout.int.test.ts` (a worker beside one of the build before). The evaluation of the search, `src/retrieval.test.ts`, `src/retrieval.int.test.ts` and `src/specification.test.ts`, is described with [its fixtures](fixtures/retrieval/README.md).
 - `src/testing/harness.ts` wires the app for all of them. Every test file has a database of its own; tests inside a file share it.
 
 ## Rules

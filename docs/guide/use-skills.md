@@ -17,13 +17,13 @@ The address is the whole setup. There is nothing to install, and the app reads t
 
 ## What your AI gets
 
-An app that connects to an address receives four read-only tools: one to browse the folders, one to search the skills and documents by their words, one to load a skill, and one to read a file. An app that implements the MCP skills extension receives the skills themselves, each as a complete document with the rules of the pack inside it. Either way the agent finds a skill by its description, loads it, follows its workflow and reads the files it points to when a step needs them. [What an agent gets over MCP](../specs/tools.md) describes the tools, and [the format](../specs/skill-repo.md) what a pack can say.
+An app that connects to an address receives four read-only tools: one to browse the folders, one to search the skills and documents, one to load a skill, and one to read a file. An app that implements the MCP skills extension receives the skills themselves, each as a complete document with the rules of the pack inside it. Either way the agent finds a skill by its description, loads it, follows its workflow and reads the files it points to when a step needs them. [What an agent gets over MCP](../specs/tools.md) describes the tools, and [the format](../specs/skill-repo.md) what a pack can say.
 
 A few things to know as you use them:
 
 - **The content is the repository's.** It is served as its author pushed it, at the commit the address resolves to. A repository nobody has vouched for carries a notice that says so; read a skill before you trust it with something that matters, as you would a script from the web.
 - **The license decides what is served.** A skill whose license does not allow copies is only described, with a link to its source, and your agent can tell you where to read it ([licenses](../specs/skill-repo.md#licenses)).
-- **Search matches words**, in the language the pack is written in, so ask for what you want in the plain words a description would use ([browse and search](../specs/tools.md#browse-and-search)).
+- **Search matches words**, in the language the pack is written in, so ask for what you want in the plain words a description would use ([browse and search](../specs/tools.md#browse-and-search)). Where a deployment also searches by meaning, a question in your own words finds its answer too, and the page of the repository says which of the two it is ([words and meaning](../specs/tools.md#words-and-meaning)).
 - **Many skills call tools.** A skill that makes a video or an image says which tool it needs and what to do when the app does not have it. The skill carries the know-how; the app brings the tools.
 
 ## Choose a version or a folder

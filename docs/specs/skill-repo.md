@@ -155,7 +155,7 @@ A pack that is mostly documents is a **document pack** ([ADR-0063](../adr/0063-p
 
   The index holds every quotation against the section its link names, word for word once links are folded to their words and markup and blanks are folded away, and reports one that is not there (`quote_not_in_source`), a block quote with no such link (`quote_without_link`) and a `from` that names nothing (`derived_from_missing`); a source changed after the note was written is found the same way. A search result marks such a document, and an agent quotes the section, never the document made from it. The format asks for no such document: this is what the ones a pack holds owe the text they rest on.
 
-The method, the steps an agent follows to make such a pack and to work one, is the reference pack's: `skillcdn-document-pack` and `skillcdn-document-research` in [skillcdn/skills](https://github.com/skillcdn/skills), served at `skillcdn.ai/gh/skillcdn/skills`, and readable without a connection with `npx @skillcdn/cli@latest skill gh/skillcdn/skills engineering/skills/skillcdn-document-pack/SKILL.md`. They follow this format and define nothing of it.
+The method, the steps an agent follows to make such a pack and to work one, is the reference pack's: `skillcdn-document-pack`, `skillcdn-document-research` and `skillcdn-document-answer` in [skillcdn/skills](https://github.com/skillcdn/skills), served at `skillcdn.ai/gh/skillcdn/skills`, and readable without a connection with `npx @skillcdn/cli@latest skill gh/skillcdn/skills engineering/skills/skillcdn-document-pack/SKILL.md`. They follow this format and define nothing of it.
 
 ### A repository without a manifest
 
@@ -175,19 +175,20 @@ Overview-only files stay out of independent search and document counts. A README
 
 ### The repository manifest: `SKILLCDN.md`
 
-A file named exactly `SKILLCDN.md` supplies metadata for its folder and a Markdown body with rules for descendant skills. Manifests may be nested; they do not make isolated projects ([ADR-0022](../adr/0022-repository-paths-and-progressive-skill-loading.md)). They use the same safe front-matter parser and limits as `SKILL.md`.
+A file named exactly `SKILLCDN.md` supplies metadata for its folder and a Markdown body with rules for descendant skills. Manifests may be nested; they do not make isolated projects ([ADR-0022](../adr/0022-repository-paths-and-progressive-skill-loading.md)). They use the same safe front-matter parser and limits as `SKILL.md`. The root manifest of the reference pack, as an example:
 
 ```markdown
 ---
-name: SkillCDN skills
-description: Skills for everyday work, one folder per area (marketing, product, engineering, and more as they are added), served live through SkillCDN. Use to run a skill that drives a tool for a task in one of these areas, or to see how a pack in the SkillCDN Format is written.
+name: SkillCDN Pack
+description: Your marketer, designer and developer in the AI you already use, making the short ad, the card news, the deck, the web app and the meeting minutes, checked before you see them. Before a job, find its skill (docs/pack/finding-a-skill.md).
+image: assets/banner.webp
 documents:
   - docs
 language: en
 translations:
   ko:
-    name: SkillCDN 스킬
-    description: 업무 분야별 폴더(마케팅, 기획, 개발, 그리고 앞으로 추가될 분야)로 정리된 일상 업무용 스킬 모음입니다. SkillCDN을 통해 실시간으로 제공됩니다. 각 분야의 도구를 다루는 스킬을 실행하거나, SkillCDN 포맷의 팩이 어떻게 쓰이는지 볼 때 쓰세요.
+    name: SkillCDN 팩
+    description: 이미 쓰는 AI 안의 마케터, 디자이너, 개발자. 숏폼 광고, 카드뉴스, 발표 덱, 웹 앱, 회의록을 직접 만들고, 보여 드리기 전에 검토합니다. 일을 하기 전에 맞는 스킬을 찾으세요. 찾는 법은 docs/pack/finding-a-skill.md에 있습니다.
 license: MIT
 metadata:
   author: skillcdn
@@ -313,7 +314,7 @@ docker run --rm -v "$PWD:/repo:ro" skillcdn check /repo        # from the image
 
 The commands name `@latest` because a runner goes on using the version it fetched first, and a command applies the reading rules it was built with: an older one reads a pack by older rules, and its first line is where that shows. When the npm registry has a later release of the command, `check` says so in a line on standard error, beside the report. That request is the only one it makes, never changes its exit code, and is left out with `--offline` or `SKILLCDN_OFFLINE=1`.
 
-The working-tree reader does not follow symbolic links and excludes repository administration and dependency directories. Hidden content otherwise follows the same declarations as indexing. It reads a working directory rather than a commit, so untracked or ignored files can make its report differ from what was pushed. Only the `INDEX_*` limits are read from the environment ([deploy](../../deploy/README.md)).
+The working-tree reader does not follow symbolic links and excludes repository administration and dependency directories. Hidden content otherwise follows the same declarations as indexing. It reads a working directory rather than a commit, so untracked or ignored files can make its report differ from what was pushed. Of the variables a deployment takes, only the limits are read from the environment, the `INDEX_*` ones and `READ_MAX_FILE_BYTES` ([deploy](../../deploy/README.md)).
 
 ## Parsing requirements
 

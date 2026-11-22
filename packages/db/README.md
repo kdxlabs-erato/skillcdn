@@ -37,7 +37,7 @@ Integration tests (`*.int.test.ts`) create a database per test file, apply the r
 
 Index entry front-matter also stores resolved local Markdown references (`href` and repository-root `path`), `linkedOnly` for files made readable by links without entering the document catalog or search, and `manifestError` for repository manifests whose presence defines a closed boundary despite an unreadable body. These are optional JSON fields; they do not add database columns.
 
-Primary keys are `uuid DEFAULT uuidv7()` and timestamps are `timestamptz`, with one exception noted below. Tenant-scoped tables carry `account_id`, and every query on them takes the account.
+Primary keys are `uuid DEFAULT uuidv7()` and timestamps are `timestamptz`; the tables keyed otherwise, by a hash or by what they hang off, say so in their row below. Tenant-scoped tables carry `account_id`, and every query on them takes the account.
 
 | Table | What a row is | Keys and indexes |
 |---|---|---|
@@ -116,7 +116,7 @@ For whoever changes this package: read the root [`AGENTS.md`](../../AGENTS.md) f
 
 ### Schema
 
-- Primary keys are `uuid` with `DEFAULT uuidv7()`. The one exception is a content-addressed table, which is keyed by its hash. Timestamps are `timestamptz`. Every table has `created_at`.
+- Primary keys are `uuid` with `DEFAULT uuidv7()`. The exceptions are a content-addressed table, which is keyed by its hash, and a table that holds one row per thing it hangs off, which is keyed by that thing's key, alone or with what tells its rows apart. Timestamps are `timestamptz`. Every table has `created_at`.
 - Every tenant-scoped table carries `account_id`, and every query on it takes the account as a required argument. A table that is deliberately not tenant-scoped (a lookup read before the account is known, a content-addressed store) says so under "Data model" above, with the rule that keeps it safe.
 - Index entries for a `(repo, commit)` are immutable: insert and delete, never update.
 - Secrets at rest: this package never sees a token. Git-host user tokens are encrypted by the caller before they reach it; sessions, authorization codes, access and refresh tokens, client secrets and repository tokens arrive as hashes. A column that would hold a usable credential is a mistake.
