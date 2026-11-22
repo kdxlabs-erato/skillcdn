@@ -175,6 +175,33 @@ describe("parseRepoManifest", () => {
     expect(warnings[0]?.message).toContain('"image" is ignored');
   });
 
+  it("reads the page an agent starts at as a path relative to the manifest (ADR-0119)", () => {
+    expect(parsed("---\ndescription: D.\n---\n").manifest.start).toBeUndefined();
+    for (const [written, read] of [
+      ["docs/pack/finding-a-skill.md", "docs/pack/finding-a-skill.md"],
+      ["./START.md", "START.md"],
+      ['"guide/start here.md"', "guide/start here.md"],
+    ]) {
+      const { manifest, warnings } = parsed(`---\ndescription: D.\nstart: ${written}\n---\n`);
+      expect(manifest.start).toBe(read);
+      expect(warnings).toEqual([]);
+    }
+  });
+
+  it.each([
+    "../outside.md",
+    "/docs/start.md/../../x",
+    "https://example.com/start.md",
+    ".",
+    "''",
+    "[a.md, b.md]",
+  ])("ignores a start page written as %s and says so", (value) => {
+    const { manifest, warnings } = parsed(`---\ndescription: D.\nstart: ${value}\n---\n`);
+    expect(manifest.start).toBeUndefined();
+    expect(warnings.map((warning) => warning.code)).toEqual(["ignored_field"]);
+    expect(warnings[0]?.message).toContain('"start" is ignored');
+  });
+
   it("warns when the description is cut at a hash", () => {
     const { manifest, warnings } = parsed("---\ndescription: Playbooks # for teams\n---\n");
     expect(manifest.description).toBe("Playbooks");

@@ -92,6 +92,40 @@ describe("repository instructions", () => {
     expect(describeFindTool({ status: "ready", catalog })).toContain("Author description.");
   });
 
+  it("tells a client of the page the pack starts at, in the place of the README (ADR-0119)", () => {
+    const catalog: MountCatalog = {
+      ...base,
+      overview: { path: path("README.md"), title: "README title", description: "README summary." },
+      manifest: {
+        name: "Author title",
+        description: "Author description.",
+        path: path("SKILLCDN.md"),
+        language: undefined,
+        hasRules: true,
+        start: path("docs/pack/finding-a-skill.md"),
+      },
+    };
+    const text = renderInstructions({ status: "ready", catalog });
+    expect(text).toContain(
+      "Start here, before a task: read_repo_file docs/pack/finding-a-skill.md.\nManifest: read_repo_file SKILLCDN.md",
+    );
+    // The README is for the people who open the repository: one line names where to begin.
+    expect(text).not.toContain("Optional overview");
+    // Without the field, the instructions are what they were.
+    const plain: MountCatalog = {
+      ...catalog,
+      manifest: {
+        name: "Author title",
+        description: "Author description.",
+        path: path("SKILLCDN.md"),
+        language: undefined,
+      },
+    };
+    expect(renderInstructions({ status: "ready", catalog: plain })).toContain(
+      "Optional overview: read_repo_file README.md.\nManifest: read_repo_file SKILLCDN.md",
+    );
+  });
+
   it("says once, on connect, that another commit's index is served and why (ADR-0068)", () => {
     const newest = "fedcba9876543210fedcba9876543210fedcba98";
     const indexing = renderInstructions({

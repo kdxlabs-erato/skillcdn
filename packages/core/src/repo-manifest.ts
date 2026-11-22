@@ -60,6 +60,12 @@ export interface RepoManifest {
   /** The picture that stands for the folder, when the manifest declares one. */
   readonly image: RepoImage | undefined;
   /**
+   * The page an agent reads before it does anything with the pack (ADR-0119), relative to the
+   * manifest: where the pack says how it is used, how the skill for a task is found. A client
+   * is told of it on connect.
+   */
+  readonly start: RepoPath | undefined;
+  /**
    * Directories whose files are served, relative to the manifest's own directory; the root path
    * stands for that directory itself. The default directories when the field is absent, none
    * when it is an empty sequence. Nothing else outside the skills is served.
@@ -167,6 +173,7 @@ export function parseRepoManifest(text: string): Result<ParsedRepoManifest, Repo
       name,
       description,
       image: readImage(fields.get("image"), ignored),
+      start: readStart(fields.get("start"), ignored),
       documents: readDocuments(fields.get("documents"), warnings),
       exclude: exclude.value,
       license: optionalText(fields, "license", MAX_OPTIONAL_FIELD_LENGTH, ignored),
@@ -239,6 +246,29 @@ function readImage(value: unknown, ignored: (message: string) => void): RepoImag
     return undefined;
   }
   return { kind: "path", path: parsed.value };
+}
+
+/**
+ * The `start` field: the path of a Markdown file relative to the manifest, written as an `image`
+ * path is. Whether the file is there, and is a document, is checked against the tree when the
+ * repository is indexed; here only the form is. Anything else is reported and ignored.
+ */
+function readStart(value: unknown, ignored: (message: string) => void): RepoPath | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const relative = typeof value === "string" ? value.trim().replace(/^\.\//, "") : "";
+  const parsed =
+    relative.length === 0 || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(relative)
+      ? undefined
+      : parseRepoPath(relative);
+  if (parsed === undefined || !parsed.ok || parsed.value === ROOT_PATH) {
+    ignored(
+      '"start" is ignored: expected the path of a Markdown document of the repository, relative to the manifest',
+    );
+    return undefined;
+  }
+  return parsed.value;
 }
 
 /** Exclusions are policy: silently dropping a typo could publish content the author withheld. */

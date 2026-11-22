@@ -106,6 +106,11 @@ export interface MountManifest {
    * of a file the tree has, or an `https` URL.
    */
   readonly image: string | undefined;
+  /**
+   * The page an agent reads first (ADR-0119): the one the nearest manifest at or above the
+   * mount names that lies inside the mount, as a repository-root path.
+   */
+  readonly start?: RepoPath | undefined;
   readonly translations: Readonly<Record<string, RepoTranslation>>;
   /** The Markdown after the front-matter, trimmed: the rules. Empty when there are none. */
   readonly rules: string;

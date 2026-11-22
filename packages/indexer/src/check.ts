@@ -150,6 +150,7 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
         `  description: ${manifest.description ?? ""}\n` +
         `  language: ${manifest.frontMatter?.language ?? "(not declared)"}\n` +
         `  image: ${manifest.frontMatter?.image ?? "(none)"}\n` +
+        `  start: ${manifest.frontMatter?.start ?? "(none: a client is told of the README, where there is one)"}\n` +
         (manifest.frontMatter?.manifestError === undefined
           ? ""
           : `  unavailable: ${manifest.frontMatter.manifestError}\n`) +
@@ -368,6 +369,10 @@ export async function checkDirectory(options: CheckOptions): Promise<number> {
             path: pathOf(manifest.path),
             hasRules: rules.length > 0,
             language: manifest.frontMatter?.language,
+            start:
+              manifest.frontMatter?.start === undefined
+                ? undefined
+                : pathOf(manifest.frontMatter.start),
           },
     skills: skills.slice(0, FIND_LIST_SKILLS_MAX).map((skill) => ({
       name: skill.name ?? "",

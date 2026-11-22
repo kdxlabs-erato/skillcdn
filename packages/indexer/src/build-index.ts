@@ -98,8 +98,11 @@ import { gitBlobHash, sha256Hex } from "./git-hash.js";
  * 20: the document a skill is served as names no commit, and a file left out of it by what the
  *     file holds, so that its digest changes with the skill and not with the repository
  *     (ADR-0117).
+ * 21: a manifest names the page an agent reads first, `start`, which is served as a document
+ *     wherever it stands; a path that names no served Markdown document is a diagnostic
+ *     (ADR-0119).
  */
-export const INDEX_VERSION = 20;
+export const INDEX_VERSION = 21;
 
 /**
  * The lowest version of the reading rules whose index is still served while the commit is
@@ -533,6 +536,8 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
     );
 
   const manifests = new Map<RepoPath, IndexEntry>();
+  /** The pages the manifests tell an agent to read first: documents, wherever they stand. */
+  const startPages = new Set<RepoPath>();
   const skills = new Map<RepoPath, IndexEntry>();
   const documents = new Map<RepoPath, IndexEntry>();
   /** The language the nearest manifest at or above a directory declares, as `language` inherits. */
@@ -698,6 +703,23 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
             messages.push(`"image" is ignored: ${pictured} is not a file of the repository`);
           }
         }
+        // The page an agent is told to read first (ADR-0119) is served as a document wherever
+        // it stands, as a file a document links to is. A path that names no Markdown file is a
+        // finding: the manifest promises a client a page that is not there.
+        let start: RepoPath | undefined;
+        if (manifest.start !== undefined) {
+          const named = joinRepoPath(directory, manifest.start);
+          if (treeFiles.has(named) && classifyRepoFile(named) === "markdown") {
+            start = named;
+            startPages.add(named);
+          } else {
+            report(
+              entry.path,
+              "start_missing",
+              `"start" names ${named}, which is not a Markdown document of the repository`,
+            );
+          }
+        }
         manifests.set(entry.path, {
           ...base,
           kind: "manifest",
@@ -709,6 +731,7 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
             metadata: { ...manifest.metadata },
             warnings: messages,
             ...(image === undefined ? {} : { image }),
+            ...(start === undefined ? {} : { start }),
             documents: [...manifest.documents],
             exclude: [...manifest.exclude],
             references: referencesOf(entry.path, text, { skill: false }),
@@ -832,7 +855,7 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
       },
     });
   }
-  const linkedFiles = new Set<RepoPath>();
+  const linkedFiles = new Set<RepoPath>(startPages);
   const overviewDirectories = new Set<RepoPath>([ROOT_PATH]);
   for (const { entry } of candidates) {
     if (isReadmePath(entry.path) || !isServedPath(entry.path, scope)) continue;
@@ -952,6 +975,20 @@ export async function buildSnapshotIndex(options: BuildIndexOptions): Promise<Sn
       const document = documents.get(entry.path);
       return document === undefined ? [] : [document];
     });
+  }
+
+  // A start page that is not served after all, excluded or not read within the limits, is not
+  // told to a client: the manifest loses it, and says why.
+  for (const [path, manifest] of manifests) {
+    const start = manifest.frontMatter?.start;
+    if (start === undefined || documents.get(start as RepoPath)?.visible === true) continue;
+    const { start: _unserved, ...kept } = manifest.frontMatter ?? { metadata: {}, warnings: [] };
+    manifests.set(path, { ...manifest, frontMatter: kept });
+    report(
+      path,
+      "start_missing",
+      `"start" names ${start}, which is not served: it is excluded, or over the indexing limits`,
+    );
   }
 
   // The licenses (ADR-0026): the repository's own file, and the file a skill's directory holds.

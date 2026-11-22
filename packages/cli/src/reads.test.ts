@@ -79,6 +79,48 @@ describe("the reads of a directory", () => {
     expect(out).not.toContain("Unverified repository content");
   });
 
+  it("tells an agent where the pack says to start, when its manifest names a page (ADR-0119)", async () => {
+    const root = await repository({
+      ...PACK,
+      "SKILLCDN.md":
+        "---\nname: Acme skills\ndescription: The skills of Acme.\nstart: guide/finding-a-skill.md\n---\nBe brief.\n",
+      "README.md": "# Acme skills\n\nFor the people who open the repository.\n",
+      "guide/finding-a-skill.md": "# Finding a skill\n\nSearch by the task, then load the skill.\n",
+    });
+    const told = await run(["skills", root]);
+    expect(told.code).toBe(0);
+    expect(told.out).toContain(
+      "Start here, before a task: skillcdn file guide/finding-a-skill.md.\nManifest: skillcdn file SKILLCDN.md",
+    );
+    expect(told.out).not.toContain("Optional overview");
+    // The page is served because the manifest names it, under no directory of documents.
+    const page = await run(["file", root, "guide/finding-a-skill.md"]);
+    expect(page.code).toBe(0);
+    expect(page.out).toContain("Search by the task, then load the skill.");
+    const mount = restMountSchema.parse(JSON.parse((await run(["skills", root, "--json"])).out));
+    if (mount.index.status !== "ready") throw new Error("not ready");
+    expect(mount.index.manifest?.start).toBe("guide/finding-a-skill.md");
+    // check prints it with the manifest, and what a client is told with it.
+    const checked = await run(["check", root]);
+    expect(checked.code).toBe(0);
+    expect(checked.out).toContain("  start: guide/finding-a-skill.md\n");
+    expect(checked.out).toContain(
+      "  Start here, before a task: read_repo_file guide/finding-a-skill.md.",
+    );
+    // A page that is not there is a finding, and the client is told of the README as before.
+    const broken = await repository({
+      ...PACK,
+      "SKILLCDN.md": "---\ndescription: The skills of Acme.\nstart: guide/nowhere.md\n---\n",
+      "README.md": "# Acme skills\n",
+    });
+    const report = await run(["check", broken]);
+    expect(report.code).toBe(1);
+    expect(report.out).toContain(
+      '- SKILLCDN.md (start_missing): "start" names guide/nowhere.md, which is not a Markdown document of the repository',
+    );
+    expect(report.out).toContain("  Optional overview: read_repo_file README.md.");
+  });
+
   it("addresses the directory by its parent's name and its own, or as --as says", async () => {
     const root = await repository(PACK);
     const named = await run(["skills", root, "--json"]);

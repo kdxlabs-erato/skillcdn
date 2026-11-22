@@ -262,6 +262,11 @@ export const restManifestSchema = z.object({
   description: z.string(),
   /** The tag of the language the repository says it is written in, or `null`. */
   language: z.nullable(z.string()),
+  /**
+   * The page the pack tells an agent to read before a task (ADR-0119), as a repository-root
+   * path inside the mount; absent when no manifest names one the mount can read.
+   */
+  start: z.optional(z.string()),
   translations: restRepoTranslationsSchema,
 });
 

@@ -317,6 +317,9 @@ export function mountBody(
                     name: answer.overview.manifest.name ?? null,
                     description: answer.overview.manifest.description,
                     language: answer.overview.manifest.language ?? null,
+                    ...(answer.overview.manifest.start === undefined
+                      ? {}
+                      : { start: answer.overview.manifest.start }),
                     translations: restRepoTranslations(answer.overview.manifest.translations),
                   },
             ...(answer.overview.overview === undefined

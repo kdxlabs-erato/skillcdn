@@ -1086,6 +1086,14 @@ export class Reader<M extends MountContext = MountContext> {
           ?.language,
         image: ancestors.find((entry) => entry.frontMatter?.image !== undefined)?.frontMatter
           ?.image,
+        // The nearest page a manifest names that this mount can read: one outside the mount
+        // is not told to its client.
+        start: ancestors
+          .flatMap((entry) => {
+            const start = parseRepoPath(entry.frontMatter?.start ?? "");
+            return start.ok && start.value !== ROOT_PATH ? [start.value] : [];
+          })
+          .find((start) => isWithinRepoPath(mount.address.path, start)),
         translations: repoTranslationsOf(row.frontMatter?.translations),
         rules: split?.kind === "found" ? split.body.trim() : "",
       };
@@ -1143,6 +1151,7 @@ export class Reader<M extends MountContext = MountContext> {
                   path: manifest.path,
                   hasRules: manifest.rules.length > 0,
                   language: manifest.language,
+                  start: manifest.start,
                 },
           skills: skills.flatMap((row) => {
             const directory = belowMount(mount, row.skillDir);

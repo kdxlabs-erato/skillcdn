@@ -191,6 +191,63 @@ describe("repository publication and link indexing", () => {
     ]);
   });
 
+  it("keeps the page a manifest starts an agent at, serves it wherever it stands, and reports one that is not a document (ADR-0119)", async () => {
+    const result = await index({
+      "SKILLCDN.md": manifest("", "documents: []\nstart: ./guide/finding-a-skill.md\n"),
+      // Under no directory of documents, and linked from nowhere: served because it is named.
+      "guide/finding-a-skill.md": "# Finding a skill\n\nSearch by the task.\n",
+      "guide/other.md": "# Other\n",
+      "team/SKILLCDN.md": manifest("", "documents: [docs]\nstart: docs/start.md\n"),
+      "team/docs/start.md": "# Start\n",
+      "missing/SKILLCDN.md": manifest("", "documents: []\nstart: nowhere.md\n"),
+      "data/SKILLCDN.md": manifest("", "documents: []\nstart: table.json\n"),
+      "data/table.json": "{}",
+      "closed/SKILLCDN.md": manifest(
+        "",
+        "documents: []\nexclude: [notes]\nstart: notes/start.md\n",
+      ),
+      "closed/notes/start.md": "# Withheld\n",
+    });
+    // A path is kept from the repository root, as a picture's is.
+    expect(result.byPath.get("SKILLCDN.md")?.frontMatter).toMatchObject({
+      start: "guide/finding-a-skill.md",
+      warnings: [],
+    });
+    expect(result.byPath.get("guide/finding-a-skill.md")).toMatchObject({
+      kind: "markdown",
+      visible: true,
+      searchable: true,
+      title: "Finding a skill",
+    });
+    // Naming one page serves that page and no other file of its folder.
+    expect(result.byPath.get("guide/other.md")).toMatchObject({ visible: false });
+    expect(result.byPath.get("team/SKILLCDN.md")?.frontMatter?.start).toBe("team/docs/start.md");
+    // A page that is not there, is not Markdown, or is withheld is not told to a client, and
+    // the author is: the manifest promised a page.
+    for (const name of ["missing/SKILLCDN.md", "data/SKILLCDN.md", "closed/SKILLCDN.md"]) {
+      expect(result.byPath.get(name)?.frontMatter?.start).toBeUndefined();
+    }
+    expect(result.byPath.get("closed/notes/start.md")).toMatchObject({ visible: false });
+    expect(
+      result.diagnostics
+        .filter((diagnostic) => diagnostic.code === "start_missing")
+        .map((diagnostic) => [diagnostic.path, diagnostic.message]),
+    ).toEqual([
+      [
+        "data/SKILLCDN.md",
+        '"start" names data/table.json, which is not a Markdown document of the repository',
+      ],
+      [
+        "missing/SKILLCDN.md",
+        '"start" names missing/nowhere.md, which is not a Markdown document of the repository',
+      ],
+      [
+        "closed/SKILLCDN.md",
+        '"start" names closed/notes/start.md, which is not served: it is excluded, or over the indexing limits',
+      ],
+    ]);
+  });
+
   it("discovers flat, nested, root and hidden skill declarations through one rule", async () => {
     const result = await index({
       "SKILL.md": skill(),

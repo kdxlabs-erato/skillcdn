@@ -157,6 +157,7 @@ export function catalogStateOf(mount: RestMount): CatalogState {
               description: manifest.description,
               path: manifest.path === null ? undefined : pathOf(manifest.path),
               language: orUndefined(manifest.language),
+              start: manifest.start === undefined ? undefined : pathOf(manifest.start),
             },
       skills: mount.index.skills.flatMap((skill) => {
         const directory = pathOf(skill.directory);

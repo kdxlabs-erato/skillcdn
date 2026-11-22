@@ -56,6 +56,11 @@ export interface SkillFrontMatter {
    */
   readonly image?: string;
   /**
+   * Repository manifest only: the page it tells an agent to read first (ADR-0119), as the
+   * repository-root path of a Markdown document the index serves.
+   */
+  readonly start?: string;
+  /**
    * Local Markdown destinations, normalized to repository-root paths; with the `section` a
    * destination's fragment names in a served file, as the offset and the length that read it
    * (ADR-0082).

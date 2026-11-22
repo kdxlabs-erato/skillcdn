@@ -16,6 +16,8 @@ export interface CatalogManifest {
   readonly path: RepoPath | undefined;
   /** Whether the manifest has a body of rules; unknown to a catalog made from the REST API. */
   readonly hasRules?: boolean;
+  /** The page the pack tells an agent to read before a task, inside the mount (ADR-0119). */
+  readonly start?: RepoPath | undefined;
   readonly language: string | undefined;
 }
 export interface MountCatalog {
@@ -289,10 +291,14 @@ export function fitInstructions(
   let result = `${compactSummary(summary, INSTRUCTIONS_MAX_LENGTH - ending.length - 1)}\n`;
   // The manifest is not an entry of any folder: a model that is told to read the pack's
   // metadata, its conversion date for one, is told here where it is.
+  // A pack that names where an agent starts is told of that page in the place of the README,
+  // which is written for the people who open the repository (ADR-0119).
   const lines = [
-    catalog.overview === undefined
-      ? undefined
-      : `Optional overview: ${words.read} ${catalog.overview.path}.`,
+    manifest?.start !== undefined
+      ? `Start here, before a task: ${words.read} ${manifest.start}.`
+      : catalog.overview === undefined
+        ? undefined
+        : `Optional overview: ${words.read} ${catalog.overview.path}.`,
     manifest?.path === undefined
       ? undefined
       : `Manifest: ${words.read} ${manifest.path} for the pack's metadata and rules.`,
