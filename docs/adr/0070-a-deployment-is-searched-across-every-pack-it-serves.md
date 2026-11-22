@@ -1,6 +1,6 @@
 # ADR-0070: A deployment is searched across every pack it serves
 
-- Status: Accepted
+- Status: Accepted; point 5 (the vectors searched exactly) is superseded by ADR-0092
 - Date: 2026-10-23
 - Builds on [ADR-0063](0063-packs-of-documents-are-served-to-agents-through-structure-words-and-meaning.md) (words and meaning), [ADR-0064](0064-meaning-search-runs-on-pgvector-and-pg-boss-behind-an-embedder-port.md) (point 2, the exact search over one mount, and an approximate index when a search across repositories asks for one), [ADR-0068](0068-a-mount-serves-the-last-indexed-commit-while-the-newest-is-not-ready.md) (the commit a mount is served from) and [ADR-0069](0069-a-word-of-a-query-weighs-by-its-rarity-among-the-entries-searched.md) (the weighing of words); refines what [ADR-0028](0028-the-front-page-and-the-explorer-are-operator-content.md) and the REST specification say of listing what is indexed.
 

@@ -1,6 +1,6 @@
 # ADR-0101: The web UI is published as a package that builds the pages with an installation's own
 
-- Status: Accepted
+- Status: Accepted; the first version by a maintainer in point 1 is amended by ADR-0102
 - Date: 2026-11-14
 - Builds on [ADR-0099](0099-the-pages-take-pages-of-an-installations-own-from-a-configuration-of-the-build.md) (pages of an installation's own from a configuration), [ADR-0046](0046-packages-are-published-to-npm-through-trusted-publishing.md) (how packages are published), [ADR-0058](0058-the-published-packages-share-one-version.md) (one version for all of them), [ADR-0048](0048-the-brand-files-are-a-package-of-their-own-under-the-trademark-policy.md) (the marks under the trademark policy) and [ADR-0049](0049-the-documentation-is-rendered-into-the-pages-from-the-repositorys-own-files.md) (the documentation rendered from the repository's own files).
 

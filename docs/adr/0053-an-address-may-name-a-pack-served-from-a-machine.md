@@ -1,6 +1,6 @@
 # ADR-0053: An address may name a pack served from a machine
 
-- Status: Accepted
+- Status: Accepted; point 2 is superseded by ADR-0071
 - Date: 2026-10-18
 - Builds on [ADR-0020](0020-a-check-role-reads-a-working-tree-with-the-indexer.md) and [ADR-0045](0045-the-indexer-is-a-package-and-check-is-a-command.md). The grammar is in [specs/address.md](../specs/address.md#served-from-a-machine).
 

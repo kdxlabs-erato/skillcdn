@@ -1,6 +1,6 @@
 # ADR-0072: The worker embeds the packs first, and the rest only when asked
 
-- Status: Accepted
+- Status: Accepted; point 4 is superseded by ADR-0073
 - Date: 2026-10-26
 - Amends points 3 and 4 of [ADR-0064](0064-meaning-search-runs-on-pgvector-and-pg-boss-behind-an-embedder-port.md) (the order of the queue, and when a repository is embedded); builds on [ADR-0026](0026-serving-follows-the-license-and-the-operators-lists.md) (the operator's lists), [ADR-0063](0063-packs-of-documents-are-served-to-agents-through-structure-words-and-meaning.md) (what a pack is) and [ADR-0071](0071-a-deployment-serves-packs-from-a-directory-of-its-own.md) (the packs of a deployment's own directory).
 

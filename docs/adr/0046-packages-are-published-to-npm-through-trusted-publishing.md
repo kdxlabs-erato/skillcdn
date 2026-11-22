@@ -1,6 +1,6 @@
 # ADR-0046: Packages are published to npm from this repository, through trusted publishing
 
-- Status: Accepted
+- Status: Accepted; point 4 (a new package's first version by hand) is amended by ADR-0102
 - Date: 2026-10-09
 - Amends: [ADR-0008](0008-repository-ends-at-an-image-that-builds.md) (the one workflow that may publish anything)
 
