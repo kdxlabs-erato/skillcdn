@@ -111,7 +111,10 @@ export interface FixtureHost extends GitHost, GitHostDirectory {
   }[];
   /** Makes `getTree` wait until the returned function is called. */
   holdTrees(): () => void;
-  /** Extra files that exist in every repository, for cases the committed fixtures do not cover. */
+  /**
+   * Extra files that exist in every repository, for cases the committed fixtures do not cover.
+   * A file added again under the same path takes the place of the one before, as an edit does.
+   */
   addFile(path: string, bytes: Uint8Array): void;
   /**
    * Makes a public repository stop being one, as its owner making it private does: the host's
@@ -275,6 +278,10 @@ export function createFixtureHost(
       const parsed = parseRepoPath(path);
       if (!parsed.ok) {
         throw new Error(`invalid fixture path ${path}`);
+      }
+      const at = extra.findIndex((file) => file.entry.path === parsed.value);
+      if (at >= 0) {
+        extra.splice(at, 1);
       }
       extra.push({
         entry: {

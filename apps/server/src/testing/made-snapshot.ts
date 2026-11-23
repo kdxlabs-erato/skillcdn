@@ -21,6 +21,11 @@ export interface MadeSnapshotOptions {
   readonly owner?: string;
   /** The commit of the default branch, so served right now, when true. */
   readonly served?: boolean;
+  /** A snapshot made before, of whose repository this one is another commit; left out, a repository of its own. */
+  readonly of?: {
+    readonly repo: { readonly accountId: string; readonly repoId: string };
+    readonly repository: HostRepository;
+  };
   readonly files: readonly {
     readonly path: string;
     readonly text: string;
@@ -34,7 +39,7 @@ let nextHostId = 8000;
 export async function makeSnapshot(database: Database, options: MadeSnapshotOptions) {
   nextHostId += 1;
   const owner = options.owner ?? `owner-${nextHostId}`;
-  const repository: HostRepository = {
+  const repository: HostRepository = options.of?.repository ?? {
     hostRepoId: String(nextHostId),
     name: `repo-${nextHostId}`,
     defaultBranch: "main",
@@ -43,13 +48,16 @@ export async function makeSnapshot(database: Database, options: MadeSnapshotOpti
     owner: { hostAccountId: `account-${owner}`, login: owner, kind: "organization" },
   };
   const now = new Date();
-  const saved = await saveRepository(
-    database,
-    { host: "gh", owner, repo: repository.name },
-    repository,
-    now,
-  );
-  const repo = { accountId: saved.accountId, repoId: saved.id };
+  const made = async () => {
+    const saved = await saveRepository(
+      database,
+      { host: "gh", owner, repo: repository.name },
+      repository,
+      now,
+    );
+    return { accountId: saved.accountId, repoId: saved.id };
+  };
+  const repo = options.of?.repo ?? (await made());
   const commit = nextHostId.toString(16).padStart(40, "0");
   const snapshot = await ensureSnapshot(database, repo, commit, INDEX_VERSION, now);
   const scope: SnapshotScope = { accountId: repo.accountId, snapshotId: snapshot.id };

@@ -1,10 +1,12 @@
 import type { BlobStore, Clock, Embedder } from "@skillcdn/core";
 import {
   type Database,
+  findSnapshotOfCommit,
   getSnapshotEmbedding,
   type JobQueue,
   recordSnapshotEmbedding,
   type SnapshotRecord,
+  type SnapshotScope,
   tierOfSnapshot,
   type VectorKey,
 } from "@skillcdn/db";
@@ -38,7 +40,8 @@ export interface EmbedTriggerDependencies {
   readonly rememberMs?: number | undefined;
   /**
    * The bodies and how the embedder cuts a text, for the vectors a commit just indexed is given
-   * from the texts it shares with what was embedded before (ADR-0107); left out, none are.
+   * from the texts it shares with what was embedded before (ADR-0107), and lent from the texts
+   * in their place in the commit before (ADR-0127); left out, none are.
    */
   readonly reuse?:
     | {
@@ -80,6 +83,35 @@ export function createEmbedTriggers(deps: EmbedTriggerDependencies): EmbedTrigge
     }
   };
 
+  /**
+   * The snapshot the ref was served from before this commit, where that one has an index
+   * (ADR-0068), for the vectors the commit's texts are lent (ADR-0127); none for a private
+   * repository. A vector is kept under the hash of a body, for every repository that holds the
+   * same bytes, and one lent is made of what the repository said before: of a public repository
+   * that is public, and of a private one it is for nobody else to be ranked by.
+   */
+  const servedBefore = async (
+    mount: Mount,
+    snapshot: IndexedSnapshot,
+  ): Promise<SnapshotScope | undefined> => {
+    const commit = mount.previousCommit;
+    if (
+      mount.repo.repository.visibility !== "public" ||
+      commit === undefined ||
+      commit === snapshot.commitSha
+    ) {
+      return undefined;
+    }
+    const before = await findSnapshotOfCommit(
+      database,
+      { accountId: snapshot.accountId, repoId: snapshot.repoId },
+      commit,
+    );
+    return before === undefined || before.indexVersion <= 0
+      ? undefined
+      : { accountId: before.accountId, snapshotId: before.id };
+  };
+
   return {
     async onIndexed(mount, snapshot) {
       const decision = await decideEmbedding(policy, mount.repo.host, mount.repo.repository);
@@ -93,8 +125,10 @@ export function createEmbedTriggers(deps: EmbedTriggerDependencies): EmbedTrigge
       if (deps.reuse !== undefined) {
         // Before the job, which the worker may take at once: what it finds then is what is left.
         try {
-          const reused = await reuseKnownVectors({ database, ...deps.reuse }, snapshot, key);
-          if (reused.sections > 0) {
+          const reused = await reuseKnownVectors({ database, ...deps.reuse }, snapshot, key, {
+            before: await servedBefore(mount, snapshot),
+          });
+          if (reused.sections + reused.lent > 0) {
             logger.info(
               { snapshot: snapshot.snapshotId, ...reused },
               "a commit was given the vectors its texts had already",

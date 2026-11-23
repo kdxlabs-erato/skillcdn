@@ -553,7 +553,7 @@ describe("a search while a commit just pushed waits to be embedded (ADR-0126)", 
       ),
     );
 
-  it("finds a skill given a new name by its words, first for its name", async () => {
+  it("finds a skill given a new name by its words, and one said anew by what stood in its place", async () => {
     // A host of its own, whose pushes nobody else sees, with one skill more than the fixture.
     const pushing = createFixtureHost("while-embedding");
     pushing.addFile(
@@ -648,8 +648,24 @@ describe("a search while a commit just pushed waits to be embedded (ADR-0126)", 
     await during.snapshots.idle();
     expect(sent).toHaveLength(1);
     expect(await worker(sent[0])).toMatchObject({ status: "embedded", next: undefined });
+    // A question in other words than the skill's finds it by meaning.
+    expect((await inPack("pardon tardy penalties")).items[0]).toMatchObject({ path: DEEP_DIVE });
 
-    // A push adds a skill under a name nothing had: no text of it has a vector.
+    // A push says the skill anew, its title, its description and every section, and adds a
+    // skill under a name nothing had: no text of either has a vector.
+    pushing.addFile(
+      DEEP_DIVE,
+      skillOf(
+        "item-deep-dive",
+        "Weighs one proposal and says whether it earns a budget.",
+        "Proposal deep dive",
+        [
+          "Read the proposal and the round it came from.",
+          "## Verdict",
+          "Say whether the proposal earns a budget, and why.",
+        ],
+      ),
+    );
     pushing.addFile(
       VENTURE,
       skillOf(
@@ -664,12 +680,12 @@ describe("a search while a commit just pushed waits to be embedded (ADR-0126)", 
     await servedFrom(pushed);
     await during.snapshots.idle();
     // Queued for the worker, which has not run: the embedding is under way from the moment the
-    // commit is served, and the body it has not reached counts as not embedded.
+    // commit is served, and the two bodies it has not reached count as not embedded.
     expect(sent).toHaveLength(2);
     const search = (await mount()).index;
     const embedding = search.status === "ready" ? search.search?.embedding : undefined;
     if (embedding?.status !== "in_progress") throw new Error("the embedding is under way");
-    expect(embedding.total - embedding.embedded).toBe(1);
+    expect(embedding.total - embedding.embedded).toBe(2);
 
     // The skill under the new name is asked for by its name. The meaning cannot have found it,
     // and finds the other deep dive: the new one keeps the first place the words gave it.
@@ -687,11 +703,20 @@ describe("a search while a commit just pushed waits to be embedded (ADR-0126)", 
       address: PACK,
       item: { kind: "skill", path: VENTURE },
     });
+    // The skill said anew is still found by the question in other words: its texts were lent
+    // the vectors of the texts in their place (ADR-0127). The words alone find nothing of the kind.
+    expect((await inPack("pardon tardy penalties")).items[0]).toMatchObject({ path: DEEP_DIVE });
+    embed.fail(new InferenceError("inference_unreachable", "the inference server is away"));
+    expect(await inPack("pardon tardy penalties")).toMatchObject({
+      ranking: { meaning: false },
+      items: [],
+    });
 
-    // The worker embeds the commit: nothing waits, and the skill is found by what it says.
-    expect(await worker(sent[1])).toMatchObject({ status: "embedded", next: undefined, bodies: 1 });
+    // The worker embeds the commit: nothing waits, and the skills are found by what they say.
+    expect(await worker(sent[1])).toMatchObject({ status: "embedded", next: undefined, bodies: 2 });
     const after = await inPack("venture-deep-dive");
     expect(after.ranking).toEqual({ meaning: true, reranked: false });
     expect(after.items[0]).toMatchObject({ path: VENTURE });
+    expect((await inPack("pardon tardy penalties")).items[0]?.path).not.toBe(DEEP_DIVE);
   });
 });

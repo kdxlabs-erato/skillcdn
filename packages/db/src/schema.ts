@@ -546,7 +546,9 @@ export const sectionVectors = pgTable(
      * text under the same model has the same vector whichever body it stands in, so a section
      * whose text has a vector is given that one and not embedded again. Null for a vector
      * written before the hash was kept, or brought in from elsewhere, which is then never
-     * found by its text.
+     * found by its text, and for a vector lent to a section of an unfinished body, the vector
+     * of the text that stood in its place in the commit before (ADR-0127): another text's,
+     * which goes when the body is written to the end.
      */
     textHash: text(),
     createdAt: createdAt(),
@@ -652,9 +654,11 @@ export const sectionHalves = pgTable(
  * A body some of whose sections have vectors under a key and the rest none yet (ADR-0107). When
  * a commit is indexed, the sections of a changed file whose texts have vectors already are given
  * them at once, so that the file is searched by the meaning of what it still says before the
- * worker reaches it. Whatever asks what is left to embed reads such a body as not embedded, and
- * the worker drops its row when it writes the rest. Content-addressed and keyed as
- * `section_vectors` is, and not tenant data: it names a body and nothing else.
+ * worker reaches it; a section that says something new may be lent the vector of the text in
+ * its place in the commit before (ADR-0127). Whatever asks what is left to embed reads such a
+ * body as not embedded, and the worker drops its row, with the vectors lent to the body, when
+ * it writes the body to the end. Content-addressed and keyed as `section_vectors` is, and not
+ * tenant data: it names a body and nothing else.
  */
 export const unfinishedBodies = pgTable(
   "unfinished_bodies",

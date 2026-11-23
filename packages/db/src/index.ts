@@ -299,6 +299,7 @@ export {
   skillBodiesWithoutHead,
   supportsSectionVectors,
   type VectorKey,
+  vectorsOfBody,
   vectorsOfTexts,
   writeSectionVectors,
 } from "./queries/vectors.js";

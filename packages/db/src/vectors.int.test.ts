@@ -31,6 +31,7 @@ import {
   skillBodiesWithoutHead,
   supportsSectionVectors,
   type VectorKey,
+  vectorsOfBody,
   vectorsOfTexts,
   writeSectionVectors,
   writeSnapshotIndex,
@@ -423,11 +424,12 @@ describe("section vectors", () => {
   });
 
   it("count a body written as unfinished as left to embed, until it is written to the end (ADR-0107)", async () => {
+    // What a section is given is the vector of its own text, found by the text's hash.
     const [first, second, third] = vectorsOf("blob-edited", BILLING, [
       [1, 0, 0, 0],
       [0, 1, 0, 0],
       [0, 0, 1, 0],
-    ]);
+    ]).map((item) => ({ ...item, textHash: `hash-of-edited-${item.section}` }));
     if (first === undefined || second === undefined || third === undefined) throw new Error("3");
     // Two of three sections given at once, the third to come.
     expect(
@@ -474,6 +476,108 @@ describe("section vectors", () => {
         .from(unfinishedBodies)
         .where(eq(unfinishedBodies.blobSha, "blob-orphan")),
     ).toEqual([]);
+  });
+
+  it("lent to a body go when the body is written to the end, with what was made of them (ADR-0127)", async () => {
+    const sections = vectorsOf("blob-lent", BILLING, [
+      [1, 0, 0, 0],
+      [0, 1, 0, 0],
+      [0, 0, 1, 0],
+    ]);
+    const [first, second, third] = sections;
+    if (first === undefined || second === undefined || third === undefined) throw new Error("3");
+    // The first section is given the vector of its own text, by its hash; the other two are lent
+    // the vectors of the texts in their place before, which carry no hash.
+    const lent = [
+      { ...first, textHash: "hash-of-lent-0" },
+      { ...second, vector: Float32Array.from([0, 0, 0, 1]) },
+      { ...third, vector: Float32Array.from([0, 0, 0, 1]) },
+    ];
+    expect(await writeSectionVectors(database, KEY, lent, { unfinished: ["blob-lent"] })).toBe(3);
+    expect(await blobsWithoutVectors(database, KEY, ["blob-lent"])).toEqual(new Set(["blob-lent"]));
+    // Searched meanwhile by what it was lent, and what the next commit is lent in its turn.
+    const held = await vectorsOfBody(database, KEY, "blob-lent");
+    expect([...held.keys()].sort()).toEqual([0, 1, 2]);
+    expect(Array.from(held.get(1) ?? [])).toEqual([0, 0, 0, 1]);
+    expect((await vectorsOfBody(database, KEY, "blob-nobody")).size).toBe(0);
+    expect(
+      (await vectorsOfBody(database, { ...KEY, model: "other-model" }, "blob-lent")).size,
+    ).toBe(0);
+    expect(await partsOf("blob-lent")).toEqual([
+      { part: 0, sections: 3, vector: [0.333, 0, 0, 0.667] },
+    ]);
+    expect((await halvesOf("blob-lent")).map((half) => half.vector)).toEqual([
+      [1, 0, 0, 0],
+      [0, 0, 0, 1],
+      [0, 0, 0, 1],
+    ]);
+    // A vector lent is found by no text: it is another text's.
+    expect((await vectorsOfTexts(database, KEY, ["hash-of-lent-1"])).size).toBe(0);
+    // A write that does not end the body leaves what it holds, lent or not.
+    expect(
+      await writeSectionVectors(database, KEY, [{ ...second, textHash: "hash-of-lent-1" }]),
+    ).toBe(0);
+    expect(Array.from((await vectorsOfBody(database, KEY, "blob-lent")).get(1) ?? [])).toEqual([
+      0, 0, 0, 1,
+    ]);
+    // The worker writes the body to the end: the two lent go, the one given stays, and the
+    // parts and the copies at half precision are made of what the body says.
+    expect(
+      await writeSectionVectors(
+        database,
+        KEY,
+        sections.map((item) => ({ ...item, textHash: `hash-of-lent-${item.section}` })),
+        { finished: ["blob-lent"] },
+      ),
+    ).toBe(2);
+    expect(await blobsWithoutVectors(database, KEY, ["blob-lent"])).toEqual(new Set());
+    const written = await vectorsOfBody(database, KEY, "blob-lent");
+    expect([0, 1, 2].map((section) => Array.from(written.get(section) ?? []))).toEqual([
+      [1, 0, 0, 0],
+      [0, 1, 0, 0],
+      [0, 0, 1, 0],
+    ]);
+    expect(await partsOf("blob-lent")).toEqual([
+      { part: 0, sections: 3, vector: [0.333, 0.333, 0.333, 0] },
+    ]);
+    expect((await halvesOf("blob-lent")).map((half) => half.vector)).toEqual([
+      [1, 0, 0, 0],
+      [0, 1, 0, 0],
+      [0, 0, 1, 0],
+    ]);
+    expect((await vectorsOfTexts(database, KEY, ["hash-of-lent-1"])).size).toBe(1);
+
+    // A section the write that ends the body has no vector for does not keep the one lent.
+    await writeSectionVectors(
+      database,
+      KEY,
+      [
+        { ...first, blobSha: "blob-lent-short" },
+        { ...second, blobSha: "blob-lent-short" },
+      ],
+      { unfinished: ["blob-lent-short"] },
+    );
+    expect(
+      await writeSectionVectors(
+        database,
+        KEY,
+        [{ ...first, blobSha: "blob-lent-short", textHash: "hash-of-lent-0" }],
+        { finished: ["blob-lent-short"] },
+      ),
+    ).toBe(1);
+    expect([...(await vectorsOfBody(database, KEY, "blob-lent-short")).keys()]).toEqual([0]);
+    expect(await partsOf("blob-lent-short")).toEqual([
+      { part: 0, sections: 1, vector: [1, 0, 0, 0] },
+    ]);
+    expect((await halvesOf("blob-lent-short")).map((half) => half.section)).toEqual([0]);
+    // And a body ended with no vector at all holds none, and no part.
+    await writeSectionVectors(database, KEY, [{ ...first, blobSha: "blob-lent-none" }], {
+      unfinished: ["blob-lent-none"],
+    });
+    expect(await writeSectionVectors(database, KEY, [], { finished: ["blob-lent-none"] })).toBe(0);
+    expect((await vectorsOfBody(database, KEY, "blob-lent-none")).size).toBe(0);
+    expect(await partsOf("blob-lent-none")).toEqual([]);
+    expect(await halvesOf("blob-lent-none")).toEqual([]);
   });
 
   it("name the entries the embedding of their snapshot has still to reach (ADR-0126)", async () => {

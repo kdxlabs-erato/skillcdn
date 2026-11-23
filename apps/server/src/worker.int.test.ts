@@ -704,6 +704,7 @@ describe("the worker", () => {
       whole: 0,
       unfinished: 1,
       sections: sections - 1,
+      lent: 0,
       left: 1,
     });
     expect(fake.calls.length).toBe(calls);
@@ -738,13 +739,153 @@ describe("the worker", () => {
       whole: 0,
       unfinished: 0,
       sections: 0,
+      lent: 0,
       left: 0,
     });
     const another = await snapshotOf(`${edited}\nOne more line.\n`);
-    expect(await reuseKnownVectors(deps, another.scope, KEY, 0)).toEqual({
+    expect(await reuseKnownVectors(deps, another.scope, KEY, { limit: 0 })).toEqual({
       whole: 0,
       unfinished: 0,
       sections: 0,
+      lent: 0,
+      left: 1,
+    });
+  });
+
+  it("lends a text with no vector the vector of the text in its place in the commit before, until the worker embeds it (ADR-0127)", async () => {
+    const written = [
+      "# Item deep dive",
+      "Looks into one item of the list, and says what it is worth.",
+      "## Inputs",
+      "The item, and the list it came from.",
+      "## Report",
+      "One page on the item, with the numbers it rests on.",
+      "",
+    ].join("\n\n");
+    // The same file under a new title, every section said anew: no text of it has a vector.
+    const rewritten = written
+      .replaceAll("Item", "Business idea")
+      .replaceAll("item", "idea")
+      .replace("## Inputs", "## What to bring");
+    const sections = sectionsOf(written).length;
+    expect(sectionsOf(rewritten)).toHaveLength(sections);
+    const deps = {
+      database: testDatabase.database,
+      blobs: createBlobStore(testDatabase.database),
+      embedder: fake.embedder,
+      policy: { scope: "all" as const, entitlements: allowEverything },
+      lists: noLists,
+      usage: discardUsage,
+      clock,
+      logger,
+    };
+    const snapshotOf = (text: string) =>
+      madeSnapshot({
+        visibility: "public",
+        files: [
+          { path: "skills/deep-dive/SKILL.md", kind: "skill", text },
+          { path: "docs/unrelated.md", text: "# Unrelated\n\nNothing of the kind.\n" },
+        ],
+      });
+    const jobOf = (made: Awaited<ReturnType<typeof snapshotOf>>): EmbedJob => ({
+      ...made.scope,
+      repoId: made.repo.repoId,
+      commitSha: made.commit,
+      key: KEY,
+      reason: "designated",
+    });
+    const before = await snapshotOf(written);
+    expect(await embedSnapshotSlice(deps, jobOf(before))).toMatchObject({ status: "embedded" });
+    const was = (await servedEntries(testDatabase.database, before.scope)).find(
+      (entry) => entry.kind === "skill",
+    );
+    if (was === undefined) throw new Error("the snapshot serves its skill");
+    const report = embeddedTextsOf(was, written).find((item) => item.heading.at(-1) === "Report");
+
+    const after = await snapshotOf(rewritten);
+    const served = (await servedEntries(testDatabase.database, after.scope)).find(
+      (entry) => entry.kind === "skill",
+    );
+    if (served === undefined) throw new Error("the snapshot serves its skill");
+    const body = served.blobSha;
+    const calls = fake.calls.length;
+    // Without the commit before, the skill is given its head alone, which says what it said,
+    // and no section: this is the change that waited for the worker. The document beside it
+    // says what it said, and is given its one section.
+    expect(await reuseKnownVectors(deps, after.scope, KEY)).toEqual({
+      whole: 1,
+      unfinished: 1,
+      sections: 2,
+      lent: 0,
+      left: 1,
+    });
+    // With it, every section is lent the vector of the section in its place: the one under a
+    // new heading by its place in the order, the others by their headings under the new title.
+    expect(await reuseKnownVectors(deps, after.scope, KEY, { before: before.scope })).toEqual({
+      whole: 0,
+      unfinished: 1,
+      sections: 1,
+      lent: sections,
+      left: 1,
+    });
+    expect(fake.calls.length).toBe(calls);
+    // Found at once by what the section in its place meant, and named as the file now reads.
+    const now = embeddedTextsOf(served, rewritten).find((item) => item.heading.at(-1) === "Report");
+    const lent = await searchSectionVectors(
+      testDatabase.database,
+      after.scope,
+      "",
+      KEY,
+      vectorOf(report?.text ?? ""),
+      1,
+    );
+    expect(lent[0]).toMatchObject({
+      path: "skills/deep-dive/SKILL.md",
+      heading: ["Business idea deep dive", "Report"],
+      offset: now?.offset,
+      length: now?.length,
+    });
+    expect(lent[0]?.similarity).toBeCloseTo(1, 5);
+    // Still the worker's, whole: a vector lent stands for no text, so every section is embedded.
+    expect(await blobsWithoutVectors(testDatabase.database, KEY, [body])).toEqual(new Set([body]));
+    expect(await embedSnapshotSlice(deps, jobOf(after))).toMatchObject({
+      status: "embedded",
+      bodies: 1,
+      sections: sections + 1,
+      reused: 1,
+    });
+    expect(fake.calls.slice(calls).flat()).toHaveLength(sections);
+    expect(await blobsWithoutVectors(testDatabase.database, KEY, [body])).toEqual(new Set());
+    // What the section says now is what it is found by, and what it was lent is gone.
+    const own = await searchSectionVectors(
+      testDatabase.database,
+      after.scope,
+      "",
+      KEY,
+      vectorOf(now?.text ?? ""),
+      1,
+    );
+    expect(own[0]).toMatchObject({ heading: ["Business idea deep dive", "Report"] });
+    expect(own[0]?.similarity).toBeCloseTo(1, 5);
+    const gone = await searchSectionVectors(
+      testDatabase.database,
+      after.scope,
+      "",
+      KEY,
+      vectorOf(report?.text ?? ""),
+      1,
+    );
+    expect(gone[0]?.similarity).toBeLessThan(0.99);
+    // A path the commit before did not hold has nothing in its place.
+    const moved = await madeSnapshot({
+      visibility: "public",
+      files: [{ path: "skills/idea-deep-dive/SKILL.md", kind: "skill", text: `${rewritten}\n` }],
+    });
+    expect(await reuseKnownVectors(deps, moved.scope, KEY, { before: before.scope })).toEqual({
+      whole: 0,
+      unfinished: 0,
+      sections: 0,
+      lent: 0,
       left: 1,
     });
   });
@@ -1184,6 +1325,7 @@ describe("the worker", () => {
         whole: 0,
         unfinished: 1,
         sections: 1,
+        lent: 0,
         left: 1,
         msg: "a commit was given the vectors its texts had already",
       }),
@@ -1206,6 +1348,80 @@ describe("the worker", () => {
       reason: "designated",
     });
 
+    // The next commit of the same repository gives the document a new title, so that no text
+    // of it has a vector: each is lent the vector of the text in its place in the commit the
+    // ref was served from before (ADR-0127).
+    const retitled = await madeSnapshot({
+      visibility: "public",
+      of: grown,
+      files: [
+        {
+          path: "SKILLCDN.md",
+          kind: "manifest",
+          text: "---\ndescription: A pack.\n---\n",
+          frontMatter: { metadata: {}, warnings: [], documents: ["docs"] },
+        },
+        { path: "docs/a.md", text: "# Alpha\n\nText.\n\n## Later\n\nA section added.\n" },
+      ],
+    });
+    const relogged = logs.length;
+    await reusing.onIndexed(
+      {
+        repo: { host: "gh", repository: retitled.repository },
+        previousCommit: grown.commit,
+      } as unknown as Mount,
+      { ...retitled.scope, repoId: retitled.repo.repoId, commitSha: retitled.commit },
+    );
+    expect(sent.at(-1)).toMatchObject({ reason: "indexed", snapshotId: retitled.scope.snapshotId });
+    expect(logs.slice(relogged)).toContainEqual(
+      expect.objectContaining({
+        whole: 0,
+        unfinished: 1,
+        sections: 0,
+        lent: 2,
+        left: 1,
+        msg: "a commit was given the vectors its texts had already",
+      }),
+    );
+    sent.pop();
+    // A private repository is lent nothing: what it said before is not for another repository
+    // that holds the same bytes to be ranked by.
+    const closed = await madeSnapshot({
+      visibility: "public",
+      of: grown,
+      files: [
+        {
+          path: "SKILLCDN.md",
+          kind: "manifest",
+          text: "---\ndescription: A pack.\n---\n",
+          frontMatter: { metadata: {}, warnings: [], documents: ["docs"] },
+        },
+        { path: "docs/a.md", text: "# Aleph\n\nText.\n\n## Later\n\nA section added.\n" },
+      ],
+    });
+    const hidden = logs.length;
+    const everything = createEmbedTriggers({
+      database: testDatabase.database,
+      jobs: recording,
+      key: KEY,
+      policy: { scope: "all", entitlements: allowEverything },
+      lists: noLists,
+      clock,
+      logger,
+      reuse: { blobs: embedDeps.blobs, embedder: fake.embedder },
+    });
+    await everything.onIndexed(
+      {
+        repo: { host: "gh", repository: { ...closed.repository, visibility: "private" } },
+        previousCommit: grown.commit,
+      } as unknown as Mount,
+      { ...closed.scope, repoId: closed.repo.repoId, commitSha: closed.commit },
+    );
+    expect(sent.at(-1)).toMatchObject({ reason: "indexed", snapshotId: closed.scope.snapshotId });
+    expect(logs.slice(hidden).map((line) => line.msg)).not.toContain(
+      "a commit was given the vectors its texts had already",
+    );
+    sent.pop();
     // A commit with nothing left to embed is queued as before, and nothing is said to be under way.
     const same = await madeSnapshot({
       visibility: "public",

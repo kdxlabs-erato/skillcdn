@@ -1,5 +1,5 @@
 import { type DocumentSection, HEAD_SECTION } from "@skillcdn/core";
-import { type AnyColumn, and, eq, inArray, notExists, type SQL, sql } from "drizzle-orm";
+import { type AnyColumn, and, eq, inArray, isNull, notExists, type SQL, sql } from "drizzle-orm";
 import { type Database, type Drizzle, drizzleOf } from "../client.js";
 import {
   indexEntries,
@@ -35,7 +35,9 @@ export interface SectionVector extends DocumentSection {
   readonly vector: Float32Array;
   /**
    * SHA-256, in hex, of the text the model was given for the section, where the writer knows it:
-   * what {@link vectorsOfTexts} finds the vector by, for another body that says the same.
+   * what {@link vectorsOfTexts} finds the vector by, for another body that says the same. Left
+   * out for a vector lent to the section (ADR-0127), which is another text's and must not be
+   * found by this one's.
    */
   readonly textHash?: string | undefined;
 }
@@ -114,7 +116,10 @@ export const underKey = (key: VectorKey) =>
   );
 
 /** The rows of a table keyed as `section_vectors` is that are under the key. */
-const underKeyOf = (table: typeof unfinishedBodies, key: VectorKey): SQL | undefined =>
+const underKeyOf = (
+  table: typeof unfinishedBodies | typeof partVectors | typeof sectionHalves,
+  key: VectorKey,
+): SQL | undefined =>
   and(
     eq(table.model, key.model),
     eq(table.dimensions, key.dimensions),
@@ -151,6 +156,12 @@ export interface BodiesWritten {
  * done ({@link blobsWithoutVectors}), unless the write names it `unfinished`; one transaction
  * keeps that true through an interruption, and the vectors of the body's parts, and of its
  * sections at half precision, are made in it from what is then stored (ADR-0092, ADR-0103).
+ *
+ * A body written as unfinished may hold vectors lent to it, those of the texts that stood in
+ * its place in the commit before (ADR-0127), which are not the vectors of what it says: they
+ * are the ones written without the hash of a text. The write that names the body `finished`
+ * carries every vector the body has, so the lent ones go first, with what was made of them,
+ * and none outlasts the body's embedding.
  */
 export async function writeSectionVectors(
   database: Database,
@@ -162,11 +173,16 @@ export async function writeSectionVectors(
     return 0;
   }
   return drizzleOf(database).transaction(async (tx) => {
+    /** The bodies that were unfinished and are written to the end: what was lent them goes. */
+    let ended: string[] = [];
     const finished = [...new Set(bodies.finished ?? [])];
     if (finished.length > 0) {
-      await tx
+      const rows = await tx
         .delete(unfinishedBodies)
-        .where(and(underKeyOf(unfinishedBodies, key), inArray(unfinishedBodies.blobSha, finished)));
+        .where(and(underKeyOf(unfinishedBodies, key), inArray(unfinishedBodies.blobSha, finished)))
+        .returning({ blobSha: unfinishedBodies.blobSha });
+      ended = rows.map((row) => row.blobSha);
+      await dropLentVectors(tx, key, ended);
     }
     const unfinished = [...new Set(bodies.unfinished ?? [])];
     if (unfinished.length > 0) {
@@ -181,9 +197,6 @@ export async function writeSectionVectors(
           })),
         )
         .onConflictDoNothing();
-    }
-    if (items.length === 0) {
-      return 0;
     }
     let written = 0;
     for (let start = 0; start < items.length; start += WRITE_BATCH_SIZE) {
@@ -206,9 +219,59 @@ export async function writeSectionVectors(
         .returning({ section: sectionVectors.section });
       written += inserted.length;
     }
-    await writePartVectors(tx, key, [...new Set(items.map((item) => item.blobSha))]);
+    await writePartVectors(tx, key, [...new Set([...ended, ...items.map((item) => item.blobSha)])]);
     return written;
   });
+}
+
+/**
+ * Drops the vectors lent to these bodies under the key (ADR-0127), the ones written without
+ * the hash of a text, with what was made of them: the bodies' parts, which the caller has made
+ * again from what is then stored, and the copies at half precision of the sections dropped. A
+ * vector a section was given for its own text stays. For a body that was unfinished and is
+ * written to the end.
+ */
+async function dropLentVectors(
+  db: Drizzle,
+  key: VectorKey,
+  blobShas: readonly string[],
+): Promise<void> {
+  if (blobShas.length === 0) {
+    return;
+  }
+  await db
+    .delete(sectionVectors)
+    .where(
+      and(
+        underKey(key),
+        inArray(sectionVectors.blobSha, [...blobShas]),
+        isNull(sectionVectors.textHash),
+      ),
+    );
+  if (!(await partVectorsPresent(db))) {
+    return;
+  }
+  await db
+    .delete(partVectors)
+    .where(and(underKeyOf(partVectors, key), inArray(partVectors.blobSha, [...blobShas])));
+  await db.delete(sectionHalves).where(
+    and(
+      underKeyOf(sectionHalves, key),
+      inArray(sectionHalves.blobSha, [...blobShas]),
+      notExists(
+        db
+          .select({ section: sectionVectors.section })
+          .from(sectionVectors)
+          .where(
+            and(
+              underKey(key),
+              eq(sectionVectors.blobSha, sectionHalves.blobSha),
+              eq(sectionVectors.section, sectionHalves.section),
+            ),
+          ),
+      ),
+    ),
+  );
 }
 
 /**
@@ -441,11 +504,28 @@ export async function vectorsOfTexts(
 }
 
 /**
+ * The vectors a body holds under the key, by the number of the section each is of, a skill's
+ * head among them: what the body that takes its place in the next commit is lent until it is
+ * embedded itself (ADR-0127). Nothing for a body without vectors.
+ */
+export async function vectorsOfBody(
+  database: Database,
+  key: VectorKey,
+  blobSha: string,
+): Promise<Map<number, Float32Array>> {
+  const rows = await drizzleOf(database)
+    .select({ section: sectionVectors.section, vector: sectionVectors.vector })
+    .from(sectionVectors)
+    .where(and(underKey(key), eq(sectionVectors.blobSha, blobSha)));
+  return new Map(rows.map((row) => [row.section, row.vector]));
+}
+
+/**
  * Which of these bodies have no vector under the key: what is left to embed. A body with any
  * section written counts as done, since a body's sections are written together, except one
  * written as unfinished, some of its sections given the vectors their texts had when its commit
- * was indexed (ADR-0107); a body that cuts into no section is never written and stays here, so
- * the caller leaves those out.
+ * was indexed (ADR-0107) or lent those of the texts in their place before (ADR-0127); a body
+ * that cuts into no section is never written and stays here, so the caller leaves those out.
  */
 export async function blobsWithoutVectors(
   database: Database,

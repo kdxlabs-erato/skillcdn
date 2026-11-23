@@ -19,6 +19,7 @@ import {
   blobsWithoutVectors,
   type Database,
   type EmbedTier,
+  type EntryRecord,
   embeddedBytesOfRepository,
   getEmbeddingUsage,
   getRepo,
@@ -30,6 +31,7 @@ import {
   tierOfSnapshot,
   usageDayOf,
   type VectorKey,
+  vectorsOfBody,
   vectorsOfTexts,
   writeSectionVectors,
 } from "@skillcdn/db";
@@ -38,6 +40,7 @@ import { compareByteOrder } from "@skillcdn/reader";
 import { vectorKeyOf } from "../adapters/meaning.js";
 import type { Logger } from "../logger.js";
 import type { OperatorLists } from "../operator/lists.js";
+import { textsInPlace } from "./places.js";
 import type { EmbedJob } from "./queues.js";
 import { decideEmbedding, type EmbedPolicy } from "./scope.js";
 
@@ -322,18 +325,63 @@ export const REUSE_BODIES = 200;
 export interface ReusedVectors {
   readonly whole: number;
   readonly unfinished: number;
+  /** Sections given the vector their own text had already. */
   readonly sections: number;
+  /** Sections lent the vector of the text that stood in their place in the commit before (ADR-0127). */
+  readonly lent: number;
   /** Bodies the worker has still to embed, those given some of their vectors among them. */
   readonly left: number;
+}
+
+export interface ReuseOptions {
+  /** In place of {@link REUSE_BODIES}. */
+  readonly limit?: number | undefined;
+  /**
+   * The snapshot the ref was served from before this commit (ADR-0068), where there is one: a
+   * text with no vector of its own is lent the vector of the text in its place there (ADR-0127).
+   */
+  readonly before?: SnapshotScope | undefined;
+}
+
+/**
+ * The vectors of the texts that stood, in the body the path held in the commit before, where
+ * these texts stand now (ADR-0127), one for each text and `undefined` where nothing stood there
+ * or it has no vector; `undefined` where the path held no such body.
+ */
+async function vectorsInPlace(
+  deps: { readonly database: Database; readonly blobs: Pick<BlobStore, "read"> },
+  key: VectorKey,
+  texts: readonly EmbeddedText[],
+  blobSha: string,
+  was: EntryRecord | undefined,
+): Promise<readonly (Float32Array | undefined)[] | undefined> {
+  // The same body in both commits has what it has: there is nothing else to lend it.
+  if (was === undefined || was.blobSha === blobSha || !embeddable(was)) {
+    return undefined;
+  }
+  const held = await vectorsOfBody(deps.database, key, was.blobSha);
+  if (held.size === 0) {
+    return undefined;
+  }
+  const text = await deps.blobs.read(was.blobSha);
+  if (text === undefined) {
+    return undefined;
+  }
+  return textsInPlace(texts, embeddedTextsOf(was, text)).map((section) =>
+    section === undefined ? undefined : held.get(section),
+  );
 }
 
 /**
  * Gives the bodies of a snapshot just indexed the vectors their texts have already under the
  * key (ADR-0107), at once and without a call to the embedder: a file edited in one place is
  * searched by the meaning of what it still says from the moment its commit is served, where it
- * waited for the worker to reach it. A body some of whose texts have no vector is written as
- * unfinished, and the worker still embeds the rest. Nothing is done when more than
- * {@link REUSE_BODIES} bodies are left to embed.
+ * waited for the worker to reach it. A text that has none, since it says something new, is
+ * lent the vector of the text that stood in its place in the commit before, where `before`
+ * names that commit's snapshot (ADR-0127): a skill given a new description, or a document a
+ * new title, is found by what it meant until the worker has read what it says. A body some of
+ * whose texts have no vector of their own is written as unfinished, and the worker still
+ * embeds it. Nothing is done when more than {@link REUSE_BODIES} bodies are left to embed.
  */
 export async function reuseKnownVectors(
   deps: {
@@ -343,7 +391,7 @@ export async function reuseKnownVectors(
   },
   scope: SnapshotScope,
   key: VectorKey,
-  limit: number = REUSE_BODIES,
+  options: ReuseOptions = {},
 ): Promise<ReusedVectors> {
   const { database } = deps;
   const served = await servedEntries(database, scope);
@@ -354,10 +402,21 @@ export async function reuseKnownVectors(
     key,
     entries.map((entry) => entry.blobSha),
   );
-  const done = { whole: 0, unfinished: 0, sections: 0 };
-  if (missing.size === 0 || missing.size > limit) {
+  const done = { whole: 0, unfinished: 0, sections: 0, lent: 0 };
+  if (missing.size === 0 || missing.size > (options.limit ?? REUSE_BODIES)) {
     return { ...done, left: missing.size };
   }
+  /** What each path held in the commit before, read when the first text asks for it. */
+  let before: Promise<ReadonlyMap<string, EntryRecord>> | undefined;
+  const heldBefore = async (path: string): Promise<EntryRecord | undefined> => {
+    if (options.before === undefined) {
+      return undefined;
+    }
+    before ??= servedEntries(database, options.before).then(
+      (rows) => new Map(rows.map((row) => [row.path, row])),
+    );
+    return (await before).get(path);
+  };
   const seen = new Set<string>();
   for (const entry of entries) {
     if (!missing.has(entry.blobSha) || seen.has(entry.blobSha)) {
@@ -371,9 +430,12 @@ export async function reuseKnownVectors(
     const texts = embeddedTextsOf(entry, text);
     const hashes = texts.map((item) => textHashOf(item.text, deps.embedder));
     const known = await vectorsOfTexts(database, key, hashes);
+    const own = hashes.map((hash) => known.get(hash));
+    const stood = own.includes(undefined)
+      ? await vectorsInPlace(deps, key, texts, entry.blobSha, await heldBefore(entry.path))
+      : undefined;
     const items: SectionVector[] = texts.flatMap((item, at) => {
-      const hash = hashes[at];
-      const vector = hash === undefined ? undefined : known.get(hash);
+      const vector = own[at] ?? stood?.[at];
       return vector === undefined
         ? []
         : [
@@ -384,16 +446,19 @@ export async function reuseKnownVectors(
               offset: item.offset,
               length: item.length,
               vector,
-              textHash: hash,
+              // A vector lent is another text's, and is never found by the hash of this one.
+              textHash: own[at] === undefined ? undefined : hashes[at],
             },
           ];
     });
     if (items.length === 0) {
       continue;
     }
-    const whole = items.length === texts.length;
+    const given = own.filter((vector) => vector !== undefined).length;
+    const whole = given === texts.length;
     await writeSectionVectors(database, key, items, whole ? {} : { unfinished: [entry.blobSha] });
-    done.sections += items.length;
+    done.sections += given;
+    done.lent += items.length - given;
     if (whole) {
       done.whole += 1;
     } else {
